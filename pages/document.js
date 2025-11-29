@@ -6,12 +6,22 @@ import styles from '../styles/Dashboard.module.css';
 export default function Document() {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [detailViewOpen, setDetailViewOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('transcribe');
 
   // Sample document data with extraction details
   const [documentData, setDocumentData] = useState([
     {
       id: 1,
+      documentId: 'DOC-001',
       name: 'Document 1',
+      type: 'Video',
+      access: 'Public',
+      fileSize: '15.2 MB',
+      description: 'There should be three safety seals around the edges of the filter.',
+      createdBy: 'You',
+      createdDate: '5th Feb, 2023',
+      createdOn: '5th Feb, 2023',
+      avatar: 'https://ui-avatars.com/api/?name=You&background=random',
       documentLink: 'https://example.com/document1.pdf',
       audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
       transcribe: [
@@ -33,7 +43,16 @@ export default function Document() {
     },
     {
       id: 2,
+      documentId: 'DOC-002',
       name: 'Document 2',
+      type: 'Audio',
+      access: 'Private',
+      fileSize: '8.5 MB',
+      description: 'Confirmation of property tax payment made up to date.',
+      createdBy: 'Wade Warren',
+      createdDate: 'Today 12:00 PM',
+      createdOn: '4th Feb, 2023',
+      avatar: 'https://ui-avatars.com/api/?name=Wade+Warren&background=random',
       documentLink: 'https://example.com/document2.pdf',
       audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
       transcribe: [
@@ -50,7 +69,16 @@ export default function Document() {
     },
     {
       id: 3,
+      documentId: 'DOC-003',
       name: 'Document 3',
+      type: 'Video',
+      access: 'Public',
+      fileSize: '22.8 MB',
+      description: 'Understanding CSS and styling in web development.',
+      createdBy: 'John Doe',
+      createdDate: 'Yesterday 3:45 PM',
+      createdOn: '3rd Feb, 2023',
+      avatar: 'https://ui-avatars.com/api/?name=John+Doe&background=random',
       documentLink: 'https://example.com/document3.pdf',
       audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
       transcribe: [
@@ -70,6 +98,7 @@ export default function Document() {
   const handleRowClick = (document) => {
     setSelectedDocument(document);
     setDetailViewOpen(true);
+    setActiveTab('transcribe'); // Reset to first tab when opening
   };
 
   const handleCloseDetail = () => {
@@ -86,6 +115,7 @@ export default function Document() {
     e.stopPropagation(); // Prevent row click
     setSelectedDocument(document);
     setDetailViewOpen(true);
+    setActiveTab('transcribe'); // Reset to first tab when opening
   };
 
   const structuredData = {
@@ -119,21 +149,27 @@ export default function Document() {
       <div className={styles.dashboard}>
         <Layout>
           <div className={styles.contentHeader}>
-            <h1 className={styles.pageTitle}>Document</h1>
+            <h1 className={styles.pageTitle}>My Documents</h1>
           </div>
 
           <div className={styles.tableContainer}>
-            <table className={styles.table}>
+            <table className={styles.documentTable}>
               <thead>
                 <tr>
-                  <th className={styles.nameColumn}>Name</th>
-                  <th className={styles.actionsColumn}>Actions</th>
+                  <th>Name</th>
+                  <th>Document Id</th>
+                  <th>Type</th>
+                  <th>Access</th>
+                  <th>File Size</th>
+                  <th>Username</th>
+                  <th>Created On</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {documentData.length === 0 ? (
                   <tr>
-                    <td colSpan="2" className={styles.emptyState}>
+                    <td colSpan="8" className={styles.emptyState}>
                       No documents available
                     </td>
                   </tr>
@@ -141,14 +177,56 @@ export default function Document() {
                   documentData.map((item) => (
                     <tr 
                       key={item.id} 
-                      className={styles.clickableRow}
+                      className={styles.documentTableRow}
                       onClick={() => handleRowClick(item)}
                     >
-                      <td className={styles.nameColumn}>{item.name}</td>
-                      <td className={styles.actionsColumn}>
-                        <div className={styles.iconActions}>
+                      <td>
+                        <div className={styles.documentNameCell}>
+                          <div className={styles.documentIcon}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                              <polyline points="14 2 14 8 20 8"></polyline>
+                              <line x1="16" y1="13" x2="8" y2="13"></line>
+                              <line x1="16" y1="17" x2="8" y2="17"></line>
+                            </svg>
+                          </div>
+                          <div className={styles.documentNameInfo}>
+                            <div className={styles.documentName}>{item.name}</div>
+                            <div className={styles.documentUploadDate}>Uploaded {item.createdOn}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={styles.documentId}>{item.documentId}</span>
+                      </td>
+                      <td>
+                        <span className={styles.documentType}>{item.type}</span>
+                      </td>
+                      <td>
+                        <span className={`${styles.documentAccess} ${item.access === 'Public' ? styles.documentAccessPublic : styles.documentAccessPrivate}`}>
+                          {item.access}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={styles.documentFileSize}>{item.fileSize}</span>
+                      </td>
+                      <td>
+                        <div className={styles.documentUsernameCell}>
+                          <img 
+                            src={item.avatar} 
+                            alt={item.createdBy}
+                            className={styles.documentUserAvatar}
+                          />
+                          <span className={styles.documentUsername}>{item.createdBy}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={styles.documentCreatedOn}>{item.createdOn}</span>
+                      </td>
+                      <td>
+                        <div className={styles.documentTableActions}>
                           <button
-                            className={styles.iconButton}
+                            className={styles.documentTableEditButton}
                             onClick={(e) => handleEdit(e, item)}
                             title="Edit"
                           >
@@ -158,7 +236,7 @@ export default function Document() {
                             </svg>
                           </button>
                           <button
-                            className={styles.iconButton}
+                            className={styles.documentTableDeleteButton}
                             onClick={(e) => handleDelete(e, item.id)}
                             title="Delete"
                           >
@@ -191,40 +269,120 @@ export default function Document() {
                 </button>
               </div>
 
+              {/* Tab Navigation */}
+              <nav className={styles.tabNavigation} role="tablist" aria-label="Document sections">
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'transcribe' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('transcribe')}
+                  role="tab"
+                  aria-selected={activeTab === 'transcribe'}
+                  aria-controls="transcribe-panel"
+                >
+                  Transcribe
+                </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'voice' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('voice')}
+                  role="tab"
+                  aria-selected={activeTab === 'voice'}
+                  aria-controls="voice-panel"
+                >
+                  Voice Extraction
+                </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'summary' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('summary')}
+                  role="tab"
+                  aria-selected={activeTab === 'summary'}
+                  aria-controls="summary-panel"
+                >
+                  Summary
+                </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'audio' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('audio')}
+                  role="tab"
+                  aria-selected={activeTab === 'audio'}
+                  aria-controls="audio-panel"
+                >
+                  Audio
+                </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'pdf' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('pdf')}
+                  role="tab"
+                  aria-selected={activeTab === 'pdf'}
+                  aria-controls="pdf-panel"
+                >
+                  PDF
+                </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'steps' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('steps')}
+                  role="tab"
+                  aria-selected={activeTab === 'steps'}
+                  aria-controls="steps-panel"
+                >
+                  Steps
+                </button>
+              </nav>
+
               <article className={styles.detailContent}>
-                {/* Transcribe Section */}
-                <section className={styles.detailSection} aria-labelledby="transcribe-heading">
-                  <h3 id="transcribe-heading" className={styles.sectionTitle}>Transcribe</h3>
-                  <div className={styles.transcribeContainer} role="region" aria-label="Transcription content">
-                    {selectedDocument.transcribe.map((item, index) => (
-                      <div key={item.id} className={styles.transcribeRow} itemScope itemType="https://schema.org/Text">
-                        <time className={styles.transcribeTimestamp} dateTime={item.timestamp}>{item.timestamp}</time>
-                        <p className={styles.transcribeText} itemProp="text">{item.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                {/* Transcribe Tab */}
+                {activeTab === 'transcribe' && (
+                  <section 
+                    id="transcribe-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="transcribe-tab"
+                  >
+                    <div className={styles.transcribeContainer} role="region" aria-label="Transcription content">
+                      {selectedDocument.transcribe.map((item, index) => (
+                        <div key={item.id} className={styles.transcribeRow} itemScope itemType="https://schema.org/Text">
+                          <time className={styles.transcribeTimestamp} dateTime={item.timestamp}>{item.timestamp}</time>
+                          <p className={styles.transcribeText} itemProp="text">{item.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-                {/* Voice Extraction Section */}
-                <section className={styles.detailSection} aria-labelledby="voice-heading">
-                  <h3 id="voice-heading" className={styles.sectionTitle}>Voice Extraction</h3>
-                  <div className={styles.voiceExtractionBox} role="region" aria-label="Voice extraction content">
-                    <p>{selectedDocument.voiceExtraction}</p>
-                  </div>
-                </section>
+                {/* Voice Extraction Tab */}
+                {activeTab === 'voice' && (
+                  <section 
+                    id="voice-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="voice-tab"
+                  >
+                    <div className={styles.voiceExtractionBox} role="region" aria-label="Voice extraction content">
+                      <p>{selectedDocument.voiceExtraction}</p>
+                    </div>
+                  </section>
+                )}
 
-                {/* Summary Section */}
-                <section className={styles.detailSection} aria-labelledby="summary-heading">
-                  <h3 id="summary-heading" className={styles.sectionTitle}>Summary</h3>
-                  <div className={styles.summaryBox} role="region" aria-label="Document summary">
-                    <p>{selectedDocument.summary}</p>
-                  </div>
-                </section>
+                {/* Summary Tab */}
+                {activeTab === 'summary' && (
+                  <section 
+                    id="summary-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="summary-tab"
+                  >
+                    <div className={styles.summaryBox} role="region" aria-label="Document summary">
+                      <p>{selectedDocument.summary}</p>
+                    </div>
+                  </section>
+                )}
 
-                {/* Audio Section */}
-                {selectedDocument.audioUrl && (
-                  <section className={styles.detailSection} aria-labelledby="audio-heading">
-                    <h3 id="audio-heading" className={styles.sectionTitle}>Audio File</h3>
+                {/* Audio Tab */}
+                {activeTab === 'audio' && selectedDocument.audioUrl && (
+                  <section 
+                    id="audio-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="audio-tab"
+                  >
                     <div className={styles.audioContainer}>
                       <audio
                         controls
@@ -250,70 +408,82 @@ export default function Document() {
                   </section>
                 )}
 
-                {/* PDF Document Section */}
-                <section className={styles.detailSection} aria-labelledby="pdf-heading">
-                  <h3 id="pdf-heading" className={styles.sectionTitle}>Document PDF</h3>
-                  <div className={styles.pdfContainer}>
-                    <iframe
-                      src={selectedDocument.pdfUrl}
-                      className={styles.pdfViewer}
-                      title={`PDF Document: ${selectedDocument.name}`}
-                      aria-label={`PDF viewer for ${selectedDocument.name}`}
-                    />
-                    <div className={styles.pdfActions}>
-                      <a
-                        href={selectedDocument.pdfUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.pdfLink}
-                        aria-label={`Open ${selectedDocument.name} PDF in new tab`}
-                      >
-                        Open in New Tab
-                      </a>
+                {/* PDF Tab */}
+                {activeTab === 'pdf' && (
+                  <section 
+                    id="pdf-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="pdf-tab"
+                  >
+                    <div className={styles.pdfContainer}>
+                      <iframe
+                        src={selectedDocument.pdfUrl}
+                        className={styles.pdfViewer}
+                        title={`PDF Document: ${selectedDocument.name}`}
+                        aria-label={`PDF viewer for ${selectedDocument.name}`}
+                      />
+                      <div className={styles.pdfActions}>
+                        <a
+                          href={selectedDocument.pdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.pdfLink}
+                          aria-label={`Open ${selectedDocument.name} PDF in new tab`}
+                        >
+                          Open in New Tab
+                        </a>
+                      </div>
                     </div>
-                  </div>
-                </section>
+                  </section>
+                )}
 
-                {/* Step Section - Last Section */}
-                <section className={styles.detailSection} aria-labelledby="step-heading">
-                  <h3 id="step-heading" className={styles.sectionTitle}>Step</h3>
-                  <div className={styles.stepTableContainer}>
-                    <table className={styles.stepTable}>
-                      <thead>
-                        <tr>
-                          <th>Timestamp</th>
-                          <th>Description</th>
-                          <th>Meta Tags</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedDocument.steps && selectedDocument.steps.length > 0 ? (
-                          selectedDocument.steps.map((step) => (
-                            <tr key={step.id}>
-                              <td className={styles.stepTimestamp}>{step.timestamp}</td>
-                              <td className={styles.stepDescription}>{step.description}</td>
-                              <td className={styles.stepMetaTags}>
-                                <div className={styles.metaTagsContainer}>
-                                  {step.metaTags.map((tag, index) => (
-                                    <span key={index} className={styles.metaTag}>
-                                      {tag}
-                                    </span>
-                                  ))}
-                                </div>
+                {/* Steps Tab */}
+                {activeTab === 'steps' && (
+                  <section 
+                    id="steps-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="steps-tab"
+                  >
+                    <div className={styles.stepTableContainer}>
+                      <table className={styles.stepTable}>
+                        <thead>
+                          <tr>
+                            <th>Timestamp</th>
+                            <th>Description</th>
+                            <th>Meta Tags</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedDocument.steps && selectedDocument.steps.length > 0 ? (
+                            selectedDocument.steps.map((step) => (
+                              <tr key={step.id}>
+                                <td className={styles.stepTimestamp}>{step.timestamp}</td>
+                                <td className={styles.stepDescription}>{step.description}</td>
+                                <td className={styles.stepMetaTags}>
+                                  <div className={styles.metaTagsContainer}>
+                                    {step.metaTags.map((tag, index) => (
+                                      <span key={index} className={styles.metaTag}>
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan="3" className={styles.emptyState}>
+                                No steps available
                               </td>
                             </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="3" className={styles.emptyState}>
-                              No steps available
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
               </article>
             </div>
           </div>
