@@ -2552,6 +2552,24 @@
   border-color: #d1d5db;
 }
 
+.deleteButton {
+  padding: 6px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.deleteButton:hover {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
 .moreButton {
   padding: 6px;
   background: none;
@@ -3993,6 +4011,60 @@
 .audioLink::before {
   content: '⬇';
   font-size: 16px;
+}
+
+/* Transcript Container */
+.transcriptContainer {
+  width: 100%;
+}
+
+.transcriptTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 20px 0;
+  padding-bottom: 12px;
+  border-bottom: 2px solid rgba(102, 126, 234, 0.2);
+}
+
+.transcriptText {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  line-height: 1.8;
+  font-size: 15px;
+  color: #1f2937;
+}
+
+.transcriptText p {
+  margin: 0 0 12px 0;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.transcriptText p:last-child {
+  margin-bottom: 0;
+}
+
+.transcriptText::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transcriptText::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.5);
+  border-radius: 4px;
+}
+
+.transcriptText::-webkit-scrollbar-thumb {
+  background: rgba(102, 126, 234, 0.3);
+  border-radius: 4px;
+}
+
+.transcriptText::-webkit-scrollbar-thumb:hover {
+  background: rgba(102, 126, 234, 0.5);
 }
 
 /* Step Table Section */

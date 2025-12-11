@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
+import { logPageView, logAccountUpdate } from '../lib/activityLogger';
+import { getCurrentUser } from '../lib/api';
 
 export default function Account() {
   const [isEditMode, setIsEditMode] = useState(false);
@@ -34,14 +36,46 @@ export default function Account() {
   };
 
   const [formData, setFormData] = useState(initialFormData);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    // Log page view
+    logPageView('Account');
+    
+    // Fetch current user data
+    fetchUserData();
+  }, []);
+
+  const fetchUserData = async () => {
+    try {
+      const userData = await getCurrentUser();
+      setUser(userData);
+      // Update form data with user data if available
+      if (userData) {
+        setFormData(prev => ({
+          ...prev,
+          fullName: userData.full_name || prev.fullName,
+          email: userData.email || prev.email
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to fetch user data:', error);
+    }
+  };
 
   const handleEdit = () => {
     setIsEditMode(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Here you would typically save to an API
     console.log('Saving data:', formData);
+    
+    // Log account update
+    logAccountUpdate({
+      fields_updated: Object.keys(formData).filter(key => formData[key] !== initialFormData[key])
+    });
+    
     setIsEditMode(false);
     // You can add a success message here
     alert('Account information saved successfully!');

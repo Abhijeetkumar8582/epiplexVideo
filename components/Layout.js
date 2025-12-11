@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import styles from '../styles/Dashboard.module.css';
+import { logout } from '../lib/api';
 
 export default function Layout({ children, pageTitle = 'Dashboard' }) {
   const router = useRouter();
@@ -218,7 +219,7 @@ export default function Layout({ children, pageTitle = 'Dashboard' }) {
                 className={styles.accountMenuItem}
                 onClick={() => {
                   setAccountDropdownOpen(false);
-                  // Handle Signout click
+                  logout();
                   router.push('/auth');
                 }}
               >

@@ -1,15 +1,30 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import Head from 'next/head';
 import styles from '../styles/Auth.module.css';
+import { login, signup, getGoogleAuthUrl } from '../lib/api';
 
 export default function Auth() {
+  const router = useRouter();
   const [isSignUp, setIsSignUp] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
   const [formData, setFormData] = useState({
-    username: '',
+    fullName: '',
     email: '',
     password: ''
   });
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('access_token');
+      if (token) {
+        router.push('/dashboard');
+      }
+    }
+  }, [router]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -17,12 +32,62 @@ export default function Auth() {
       ...prev,
       [name]: value
     }));
+    // Clear error when user starts typing
+    if (error) setError('');
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Handle form submission
-    console.log(isSignUp ? 'Sign Up' : 'Login', formData);
+    setError('');
+    setIsLoading(true);
+
+    try {
+      if (isSignUp) {
+        // Signup
+        if (!formData.fullName || !formData.email || !formData.password) {
+          setError('Please fill in all fields');
+          setIsLoading(false);
+          return;
+        }
+        if (formData.password.length < 4) {
+          setError('Password must be at least 4 characters long');
+          setIsLoading(false);
+          return;
+        }
+        if (formData.password.length > 20) {
+          setError('Password must be at most 20 characters long');
+          setIsLoading(false);
+          return;
+        }
+        await signup(formData.fullName, formData.email, formData.password);
+        // After successful signup, switch to login mode
+        setIsSignUp(false);
+        setError('');
+        setFormData({ fullName: '', email: '', password: '' });
+        alert('Account created successfully! Please login.');
+      } else {
+        // Login
+        if (!formData.email || !formData.password) {
+          setError('Please fill in all fields');
+          setIsLoading(false);
+          return;
+        }
+        await login(formData.email, formData.password);
+        // Redirect to dashboard on successful login
+        router.push('/dashboard');
+      }
+    } catch (err) {
+      const errorMessage = err.response?.data?.detail || err.message || 'An error occurred. Please try again.';
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleAuth = () => {
+    const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/auth` : '';
+    const googleAuthUrl = getGoogleAuthUrl(redirectUri);
+    window.location.href = googleAuthUrl;
   };
 
   const toggleMode = () => {
@@ -63,21 +128,21 @@ export default function Auth() {
                 
                 <form onSubmit={handleSubmit} className={styles.form}>
                   <div className={styles.inputGroup}>
-                    <label htmlFor="login-username" className={styles.label}>Username</label>
+                    <label htmlFor="login-email" className={styles.label}>Email</label>
                     <div className={styles.inputWrapper}>
                       <input
-                        type="text"
-                        id="login-username"
-                        name="username"
-                        value={formData.username}
+                        type="email"
+                        id="login-email"
+                        name="email"
+                        value={formData.email}
                         onChange={handleInputChange}
                         className={styles.input}
-                        placeholder="Enter your username"
+                        placeholder="Enter your email"
                         required
                       />
                       <svg className={styles.inputIcon} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                        <circle cx="12" cy="7" r="4"></circle>
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                        <polyline points="22,6 12,13 2,6"></polyline>
                       </svg>
                     </div>
                   </div>
@@ -102,11 +167,17 @@ export default function Auth() {
                     </div>
                   </div>
 
-                  <button type="submit" className={styles.submitButton}>
-                    Login
+                  {error && !isSignUp && (
+                    <div className={styles.errorMessage} style={{ color: '#ef4444', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                      {error}
+                    </div>
+                  )}
+
+                  <button type="submit" className={styles.submitButton} disabled={isLoading}>
+                    {isLoading ? 'Loading...' : 'Login'}
                   </button>
 
-                  <button type="button" className={styles.googleButton}>
+                  <button type="button" className={styles.googleButton} onClick={handleGoogleAuth} disabled={isLoading}>
                     <svg className={styles.googleIcon} width="20" height="20" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                       <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -117,7 +188,7 @@ export default function Auth() {
                   </button>
 
                   <div className={styles.switchLink}>
-                    Don't have an account?{' '}
+                    Don&apos;t have an account?{' '}
                     <button type="button" onClick={toggleMode} className={styles.linkButton}>
                       Sign up
                     </button>
@@ -136,16 +207,16 @@ export default function Auth() {
                 
                 <form onSubmit={handleSubmit} className={styles.form}>
                   <div className={styles.inputGroup}>
-                    <label htmlFor="signup-username" className={styles.label}>Username</label>
+                    <label htmlFor="signup-fullName" className={styles.label}>Full Name</label>
                     <div className={styles.inputWrapper}>
                       <input
                         type="text"
-                        id="signup-username"
-                        name="username"
-                        value={formData.username}
+                        id="signup-fullName"
+                        name="fullName"
+                        value={formData.fullName}
                         onChange={handleInputChange}
                         className={styles.input}
-                        placeholder="Enter your username"
+                        placeholder="Enter your full name"
                         required
                       />
                       <svg className={styles.inputIcon} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -195,11 +266,17 @@ export default function Auth() {
                     </div>
                   </div>
 
-                  <button type="submit" className={styles.submitButton}>
-                    Sign Up
+                  {error && isSignUp && (
+                    <div className={styles.errorMessage} style={{ color: '#ef4444', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                      {error}
+                    </div>
+                  )}
+
+                  <button type="submit" className={styles.submitButton} disabled={isLoading}>
+                    {isLoading ? 'Creating Account...' : 'Sign Up'}
                   </button>
 
-                  <button type="button" className={styles.googleButton}>
+                  <button type="button" className={styles.googleButton} onClick={handleGoogleAuth} disabled={isLoading}>
                     <svg className={styles.googleIcon} width="20" height="20" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                       <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>

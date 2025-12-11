@@ -3,6 +3,8 @@ import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
+import { logPageView, logVideoUpload } from '../lib/activityLogger';
+import { uploadVideo, getStatus, getVideosPanel, deleteUpload } from '../lib/api';
 
 export default function ProcessData() {
   const router = useRouter();
@@ -20,12 +22,12 @@ export default function ProcessData() {
   const [isUploading, setIsUploading] = useState(false);
 
   const processingSteps = [
-    { id: 1, label: 'Transcribe', number: '1' },
-    { id: 2, label: 'Keyframe', number: '2' },
-    { id: 3, label: 'Video Context', number: '3' },
-    { id: 4, label: 'Processing Video', number: '4' },
-    { id: 5, label: 'Saving in Database', number: '5' },
-    { id: 6, label: 'Creating File', number: '6' },
+    { id: 1, label: 'Upload', number: '1' },
+    { id: 2, label: 'Transcribe', number: '2' },
+    { id: 3, label: 'Extract Keyframes', number: '3' },
+    { id: 4, label: 'Analyze Frames', number: '4' },
+    { id: 5, label: 'Processing', number: '5' },
+    { id: 6, label: 'Saving', number: '6' },
     { id: 7, label: 'Ready', number: '7' }
   ];
 
@@ -46,6 +48,69 @@ export default function ProcessData() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [filterCalendarMonth, setFilterCalendarMonth] = useState(new Date());
 
+  useEffect(() => {
+    // Log page view
+    logPageView('Process Data');
+    // Fetch videos from API
+    fetchVideos();
+  }, []);
+
+  const fetchVideos = async () => {
+    try {
+      setLoading(true);
+      const response = await getVideosPanel({ 
+        page: 1, 
+        page_size: 100,
+        sort_by: 'updated_at',
+        sort_order: 'desc'
+      });
+      
+      if (response && response.videos) {
+        // Map API response to table format
+        const mappedData = response.videos.map((video) => {
+          const createdDate = new Date(video.created_at);
+          const updatedDate = new Date(video.updated_at);
+          
+          const formatDate = (date) => {
+            const dateStr = date.toLocaleDateString('en-US', { 
+              month: 'short', 
+              day: 'numeric', 
+              year: 'numeric' 
+            });
+            const timeStr = date.toLocaleTimeString('en-US', { 
+              hour: 'numeric', 
+              minute: '2-digit', 
+              hour12: true 
+            });
+            return `${dateStr}, ${timeStr}`;
+          };
+
+          // Get first letter of name for recipient avatar
+          const firstLetter = video.name ? video.name.charAt(0).toUpperCase() : 'U';
+          
+          return {
+            id: video.id,
+            name: video.name,
+            created: formatDate(createdDate),
+            lastActivity: formatDate(updatedDate),
+            recipients: [firstLetter], // Show first letter as avatar
+            status: video.status || 'uploaded',
+            video_file_number: video.video_file_number,
+            job_id: video.job_id || null
+          };
+        });
+        
+        setTableData(mappedData);
+      }
+    } catch (error) {
+      console.error('Failed to fetch videos:', error);
+      // Set empty array on error
+      setTableData([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Sample users for dropdown
   const users = [
     'Abhi K',
@@ -59,64 +124,34 @@ export default function ProcessData() {
     'Mike Johnson'
   ];
 
-  const statusOptions = ['Draft', 'Completed', 'Sent', 'Processing', 'Pending'];
+  const statusOptions = ['uploaded', 'processing', 'completed', 'failed', 'cancelled'];
 
-  // Sample data - replace with actual data from API
-  const [tableData, setTableData] = useState([
-    {
-      id: 1,
-      name: 'Sample Sales Proposal',
-      created: 'Jan 16, 2024, 9:18 AM',
-      lastActivity: 'Jan 24, 2024, 9:18 AM',
-      recipients: ['N', 'User1', 'User2'],
-      status: 'Draft'
-    },
-    {
-      id: 2,
-      name: 'Start exploring here! (Product guide)',
-      created: 'Jan 15, 2024, 9:18 AM',
-      lastActivity: 'Jan 23, 2024, 9:18 AM',
-      recipients: ['User1', 'User2'],
-      status: 'Completed'
-    },
-    {
-      id: 3,
-      name: 'Memorandum of Understanding',
-      created: 'Jan 14, 2024, 9:18 AM',
-      lastActivity: 'Jan 23, 2024, 9:18 AM',
-      recipients: ['M'],
-      status: 'Completed'
-    },
-    {
-      id: 4,
-      name: 'Employment Contract',
-      created: 'Jan 13, 2024, 9:20 AM',
-      lastActivity: 'Jan 22, 2024, 9:18 AM',
-      recipients: ['User3', 'User4', '3+'],
-      status: 'Sent'
-    },
-    {
-      id: 5,
-      name: 'Purchase Agreement',
-      created: 'Jan 12, 2024, 9:18 AM',
-      lastActivity: 'Jan 21, 2024, 10:24 AM',
-      recipients: ['A', 'E'],
-      status: 'Draft'
-    },
-    {
-      id: 6,
-      name: 'Lease Agreement',
-      created: 'Jan 10, 2024, 11:18 AM',
-      lastActivity: 'Jan 21, 2024, 10:22 AM',
-      recipients: ['User3', 'R'],
-      status: 'Completed'
-    }
-  ]);
-
+  // Real data from API
+  const [tableData, setTableData] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [newEntryId, setNewEntryId] = useState(null);
+  const [currentJobId, setCurrentJobId] = useState(null);
+  const [processingStatus, setProcessingStatus] = useState(null);
+  const [statusPollingInterval, setStatusPollingInterval] = useState(null);
 
-  const handleDelete = (id) => {
-    setTableData(tableData.filter(item => item.id !== id));
+  const handleDelete = async (e, id) => {
+    e.stopPropagation(); // Prevent row click
+    
+    // Confirm deletion
+    if (!confirm('Are you sure you want to permanently delete this video? This action cannot be undone and the data will be removed from the database.')) {
+      return;
+    }
+    
+    try {
+      // Call delete API endpoint with permanent=true to hard delete from database
+      await deleteUpload(id, true);
+      // Refresh the list
+      await fetchVideos();
+    } catch (error) {
+      console.error('Failed to delete:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to delete item. Please try again.';
+      alert(errorMessage);
+    }
   };
 
   const handleEdit = (id) => {
@@ -192,73 +227,225 @@ export default function ProcessData() {
     setIsUploading(false);
   };
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!formData.name || (!formData.link && !formData.file && !formData.fileUrl)) {
       return;
     }
 
-    const entryId = Date.now();
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    const formattedDate = `${dateStr}, ${timeStr}`;
+    // If file is selected, upload it
+    if (formData.file) {
+      try {
+        setIsUploading(true);
+        setUploadProgress(0);
+        
+        const response = await uploadVideo(formData.file, (progress) => {
+          setUploadProgress(progress);
+        }, {
+          name: formData.name,
+          application_name: formData.application_name,
+          tags: formData.tags,
+          language_code: formData.language_code,
+          priority: formData.priority || 'normal'
+        });
+        
+        // Log video upload
+        if (response.data && response.data.id) {
+          logVideoUpload(response.data.id, {
+            name: formData.name,
+            video_file_number: response.data.video_file_number
+          });
+        }
+        
+        const entryId = response.data?.id || Date.now();
+        const jobId = response.data?.job_id || null;
+        
+        // Refresh the list to show the new entry
+        await fetchVideos();
+        
+        setNewEntryId(entryId);
+        setCurrentJobId(jobId);
+        setDialogOpen(false);
+        setProcessingOpen(true);
+        setCurrentStep(0);
+        setFormData({ name: '', link: '', file: null, fileUrl: '' });
+        setIsUploading(false);
+        
+        // Start polling for status if job_id is available
+        if (jobId) {
+          startStatusPolling(jobId);
+        }
+      } catch (error) {
+        console.error('Upload failed:', error);
+        // Show detailed error message
+        let errorMessage = 'Failed to upload video. Please try again.';
+        if (error.response) {
+          // Server responded with error
+          errorMessage = error.response.data?.detail || error.response.data?.message || errorMessage;
+          if (error.response.status === 401) {
+            errorMessage = 'Authentication failed. Please log in again.';
+          } else if (error.response.status === 413) {
+            errorMessage = 'File is too large. Please choose a smaller file.';
+          } else if (error.response.status === 400) {
+            errorMessage = error.response.data?.detail || 'Invalid file. Please check the file format and try again.';
+          }
+        } else if (error.request) {
+          // Request was made but no response received
+          errorMessage = 'Network error. Please check your connection and try again.';
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        alert(errorMessage);
+        setIsUploading(false);
+        setUploadProgress(0);
+      }
+    } else {
+      // For URL or link-based uploads, create entry without file
+      const entryId = Date.now();
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const formattedDate = `${dateStr}, ${timeStr}`;
 
-    const newEntry = {
-      id: entryId,
-      name: formData.name,
-      created: formattedDate,
-      lastActivity: formattedDate,
-      recipients: ['U'],
-      status: 'Processing'
-    };
+      const newEntry = {
+        id: entryId,
+        name: formData.name,
+        created: formattedDate,
+        lastActivity: formattedDate,
+        recipients: ['U'],
+        status: 'Processing'
+      };
 
-    setTableData(prev => [newEntry, ...prev]);
-    setNewEntryId(entryId);
-    
-    setDialogOpen(false);
-    setProcessingOpen(true);
-    setCurrentStep(0);
-    setFormData({ name: '', link: '', file: null, fileUrl: '' });
-    setUploadProgress(0);
-    setIsUploading(false);
+      // Refresh the list to show the new entry
+      await fetchVideos();
+      
+      setNewEntryId(entryId);
+      setDialogOpen(false);
+      setProcessingOpen(true);
+      setCurrentStep(0);
+      setFormData({ name: '', link: '', file: null, fileUrl: '' });
+      setUploadProgress(0);
+      setIsUploading(false);
+    }
   };
 
-  useEffect(() => {
-    if (!processingOpen) return;
-
-    if (currentStep < processingSteps.length) {
-      const timer = setTimeout(() => {
-        const nextStep = currentStep + 1;
+  // Poll job status when processing is open
+  const startStatusPolling = (jobId) => {
+    if (!jobId) return;
+    
+    const pollStatus = async () => {
+      try {
+        const status = await getStatus(jobId);
+        setProcessingStatus(status);
         
-        if (nextStep >= processingSteps.length) {
-          setTimeout(() => {
-            setProcessingOpen(false);
-            setCurrentStep(0);
-            
-            if (newEntryId) {
-              const now = new Date();
-              const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-              const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-              const formattedDate = `${dateStr}, ${timeStr}`;
-              
-              setTableData(prev => 
-                prev.map(item => 
-                  item.id === newEntryId 
-                    ? { ...item, status: 'Completed', lastActivity: formattedDate }
-                    : item
-                )
-              );
-              setNewEntryId(null);
+        // Update current step based on status
+        if (status) {
+          const stepProgress = status.step_progress || {};
+          const currentStepName = status.current_step || 'upload';
+          
+          // Map backend steps to frontend steps (0-6)
+          let stepIndex = 0;
+          
+          // Step 0: Upload (always completed when we start polling)
+          if (stepProgress.upload === 'completed') {
+            stepIndex = 0;
+          }
+          
+          // Step 1: Transcribe
+          if (stepProgress.transcribe === 'processing') {
+            stepIndex = 1;
+          } else if (stepProgress.transcribe === 'completed') {
+            stepIndex = 1;
+          }
+          
+          // Step 2: Extract Keyframes
+          if (stepProgress.extract_frames === 'processing') {
+            stepIndex = 2;
+          } else if (stepProgress.extract_frames === 'completed') {
+            stepIndex = 2;
+          }
+          
+          // Step 3: Analyze Frames (GPT processing in batches of 5)
+          if (stepProgress.analyze_frames === 'processing') {
+            stepIndex = 3;
+          } else if (stepProgress.analyze_frames === 'completed') {
+            stepIndex = 3;
+          }
+          
+          // Step 4: Processing/Finalizing
+          if (stepProgress.process === 'processing' || stepProgress.complete === 'processing') {
+            stepIndex = 4;
+          } else if (stepProgress.process === 'completed' || stepProgress.complete === 'processing') {
+            stepIndex = 4;
+          }
+          
+          // Step 5: Saving/Complete
+          if (stepProgress.complete === 'completed' || (stepProgress.complete === 'completed' && status.status === 'processing')) {
+            stepIndex = 5;
+          }
+          
+          // Step 6: Ready (completed)
+          if (status.status === 'completed') {
+            stepIndex = 6;
+          }
+          
+          setCurrentStep(stepIndex);
+          
+          // If completed or failed, stop polling
+          if (status.status === 'completed' || status.status === 'failed') {
+            if (statusPollingInterval) {
+              clearInterval(statusPollingInterval);
+              setStatusPollingInterval(null);
             }
-          }, 2000);
-        } else {
-          setCurrentStep(nextStep);
+            
+            // Wait a bit then close and refresh
+            setTimeout(async () => {
+              setProcessingOpen(false);
+              setCurrentStep(0);
+              setProcessingStatus(null);
+              setCurrentJobId(null);
+              
+              if (newEntryId) {
+                await fetchVideos();
+                setNewEntryId(null);
+              }
+            }, 2000);
+          }
         }
-      }, 1500);
-
-      return () => clearTimeout(timer);
+      } catch (error) {
+        console.error('Failed to poll status:', error);
+        // Continue polling even on error (might be temporary network issue)
+      }
+    };
+    
+    // Poll immediately
+    pollStatus();
+    
+    // Then poll every 2 seconds
+    const interval = setInterval(pollStatus, 2000);
+    setStatusPollingInterval(interval);
+    
+    // Store interval ID for cleanup
+    return interval;
+  };
+  
+  // Cleanup polling on unmount or when processing closes
+  useEffect(() => {
+    return () => {
+      if (statusPollingInterval) {
+        clearInterval(statusPollingInterval);
+      }
+    };
+  }, [statusPollingInterval]);
+  
+  // Stop polling when processing dialog closes
+  useEffect(() => {
+    if (!processingOpen && statusPollingInterval) {
+      clearInterval(statusPollingInterval);
+      setStatusPollingInterval(null);
+      setProcessingStatus(null);
+      setCurrentJobId(null);
     }
-  }, [processingOpen, currentStep, processingSteps.length, newEntryId]);
+  }, [processingOpen, statusPollingInterval]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -285,20 +472,26 @@ export default function ProcessData() {
   };
 
   const getStatusClass = (status) => {
-    switch (status) {
-      case 'Completed':
+    switch (status?.toLowerCase()) {
+      case 'completed':
         return styles.statusCompleted;
-      case 'Draft':
+      case 'uploaded':
+      case 'draft':
         return styles.statusDraft;
-      case 'Sent':
-        return styles.statusSent;
-      case 'Processing':
+      case 'processing':
         return styles.statusProcessing;
-      case 'Pending':
+      case 'failed':
+        return styles.statusPending;
+      case 'cancelled':
         return styles.statusPending;
       default:
         return '';
     }
+  };
+
+  const formatStatus = (status) => {
+    if (!status) return 'Uploaded';
+    return status.charAt(0).toUpperCase() + status.slice(1);
   };
 
   const handleRemoveSort = () => {
@@ -627,7 +820,13 @@ export default function ProcessData() {
                 </tr>
               </thead>
               <tbody>
-                {tableData.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan="6" className={styles.emptyState}>
+                      Loading...
+                    </td>
+                  </tr>
+                ) : tableData.length === 0 ? (
                   <tr>
                     <td colSpan="6" className={styles.emptyState}>
                       No data available
@@ -676,12 +875,34 @@ export default function ProcessData() {
                       </td>
                       <td>
                         <span className={`${styles.statusBadge} ${getStatusClass(item.status)}`}>
-                          {item.status}
+                          {formatStatus(item.status)}
                         </span>
                       </td>
                       <td>
                         <div className={styles.tableActions}>
-                          <button className={styles.viewButton}>View</button>
+                          <button 
+                            className={styles.viewButton}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (item.video_file_number) {
+                                router.push(`/document?video=${item.video_file_number}`);
+                              } else {
+                                router.push(`/document`);
+                              }
+                            }}
+                          >
+                            View
+                          </button>
+                          <button 
+                            className={styles.deleteButton}
+                            onClick={(e) => handleDelete(e, item.id)}
+                            title="Delete video"
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                          </button>
                           <button className={styles.moreButton}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <circle cx="12" cy="12" r="1"></circle>
@@ -830,28 +1051,63 @@ export default function ProcessData() {
         )}
 
         {/* Processing Animation */}
-        {processingOpen && currentStep < processingSteps.length && (
+        {processingOpen && (
           <div className={styles.processingOverlay}>
             <div className={styles.processingContainer}>
               <h2 className={styles.processingTitle}>Processing Video Extraction</h2>
+              
+              {/* Show progress percentage if available */}
+              {processingStatus && processingStatus.progress !== undefined && (
+                <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '18px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                    {processingStatus.progress}%
+                  </div>
+                  {processingStatus.message && (
+                    <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                      {processingStatus.message}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Show error if failed */}
+              {processingStatus && processingStatus.status === 'failed' && (
+                <div style={{ 
+                  marginBottom: '20px', 
+                  padding: '12px', 
+                  backgroundColor: '#fee2e2', 
+                  borderRadius: '8px',
+                  color: '#991b1b',
+                  fontSize: '14px'
+                }}>
+                  <strong>Error:</strong> {processingStatus.error || processingStatus.message || 'Processing failed'}
+                </div>
+              )}
+              
               <div className={styles.currentStepContainer}>
                 {processingSteps.map((step, index) => {
                   if (index === currentStep) {
                     const isLastStep = index === processingSteps.length - 1;
+                    const isCompleted = processingStatus && processingStatus.status === 'completed';
                     return (
                       <div key={step.id} className={styles.singleStep}>
-                        <div className={`${styles.stepCircle} ${styles.stepCircleActive} ${styles[`stepCircle${step.number}`]} ${isLastStep ? styles.stepCircleLast : ''}`}>
-                          <span className={styles.stepNumber}>{step.number}</span>
+                        <div className={`${styles.stepCircle} ${styles.stepCircleActive} ${styles[`stepCircle${step.number}`]} ${isLastStep ? styles.stepCircleLast : ''} ${isCompleted ? styles.stepCircleCompleted : ''}`}>
+                          <span className={styles.stepNumber}>{isCompleted && isLastStep ? '✓' : step.number}</span>
                         </div>
                         <div className={styles.stepLabelContainer}>
                           <span className={styles.stepLabelActive}>
                             {step.label}
                           </span>
-                          {!isLastStep && (
+                          {!isLastStep && !isCompleted && (
                             <div className={styles.loadingDots}>
                               <span></span>
                               <span></span>
                               <span></span>
+                            </div>
+                          )}
+                          {isCompleted && isLastStep && (
+                            <div style={{ color: '#10b981', fontSize: '14px', marginTop: '8px' }}>
+                              Processing completed successfully!
                             </div>
                           )}
                         </div>

@@ -1,104 +1,151 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
+import { logPageView, logDocumentView } from '../lib/activityLogger';
+import { getVideosPanel, getDocument } from '../lib/api';
 
 export default function Document() {
+  const router = useRouter();
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [detailViewOpen, setDetailViewOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('transcribe');
+  const [videos, setVideos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [documentData, setDocumentData] = useState(null);
 
-  // Sample document data with extraction details
-  const [documentData, setDocumentData] = useState([
-    {
-      id: 1,
-      documentId: 'DOC-001',
-      name: 'Document 1',
-      type: 'Video',
-      access: 'Public',
-      fileSize: '15.2 MB',
-      description: 'There should be three safety seals around the edges of the filter.',
-      createdBy: 'You',
-      createdDate: '5th Feb, 2023',
-      createdOn: '5th Feb, 2023',
-      avatar: 'https://ui-avatars.com/api/?name=You&background=random',
-      documentLink: 'https://example.com/document1.pdf',
-      audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-      transcribe: [
-        { id: 1, text: 'Welcome to this video tutorial. Today we will learn about React.', timestamp: '0:00' },
-        { id: 2, text: 'First, let\'s understand the basic concepts of React components.', timestamp: '0:15' },
-        { id: 3, text: 'Components are the building blocks of React applications.', timestamp: '0:30' },
-        { id: 4, text: 'They help us create reusable UI elements.', timestamp: '0:45' }
-      ],
-      voiceExtraction: 'This is the extracted voice content from the video. It contains all the spoken words and audio information processed during the extraction.',
-      summary: 'This video tutorial covers the fundamentals of React, focusing on components as the core building blocks. It explains how components enable the creation of reusable UI elements in React applications.',
-      pdfUrl: 'https://example.com/document1.pdf',
-      steps: [
-        { id: 1, timestamp: '0:00', description: 'Video upload initiated', metaTags: ['upload', 'video', 'mp4'] },
-        { id: 2, timestamp: '0:05', description: 'Transcription process started', metaTags: ['transcribe', 'audio', 'speech'] },
-        { id: 3, timestamp: '0:15', description: 'Keyframe extraction completed', metaTags: ['keyframe', 'extraction', 'frames'] },
-        { id: 4, timestamp: '0:30', description: 'Document generation in progress', metaTags: ['document', 'generation', 'pdf'] },
-        { id: 5, timestamp: '0:45', description: 'Processing completed successfully', metaTags: ['complete', 'success', 'final'] }
-      ]
-    },
-    {
-      id: 2,
-      documentId: 'DOC-002',
-      name: 'Document 2',
-      type: 'Audio',
-      access: 'Private',
-      fileSize: '8.5 MB',
-      description: 'Confirmation of property tax payment made up to date.',
-      createdBy: 'Wade Warren',
-      createdDate: 'Today 12:00 PM',
-      createdOn: '4th Feb, 2023',
-      avatar: 'https://ui-avatars.com/api/?name=Wade+Warren&background=random',
-      documentLink: 'https://example.com/document2.pdf',
-      audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
-      transcribe: [
-        { id: 1, text: 'Introduction to JavaScript programming language.', timestamp: '0:00' },
-        { id: 2, text: 'We will cover variables, functions, and objects.', timestamp: '0:20' }
-      ],
-      voiceExtraction: 'JavaScript is a versatile programming language used for web development.',
-      summary: 'A comprehensive introduction to JavaScript covering basic programming concepts.',
-      pdfUrl: 'https://example.com/document2.pdf',
-      steps: [
-        { id: 1, timestamp: '0:00', description: 'Video processing started', metaTags: ['process', 'start'] },
-        { id: 2, timestamp: '0:20', description: 'Audio extraction completed', metaTags: ['audio', 'extract'] }
-      ]
-    },
-    {
-      id: 3,
-      documentId: 'DOC-003',
-      name: 'Document 3',
-      type: 'Video',
-      access: 'Public',
-      fileSize: '22.8 MB',
-      description: 'Understanding CSS and styling in web development.',
-      createdBy: 'John Doe',
-      createdDate: 'Yesterday 3:45 PM',
-      createdOn: '3rd Feb, 2023',
-      avatar: 'https://ui-avatars.com/api/?name=John+Doe&background=random',
-      documentLink: 'https://example.com/document3.pdf',
-      audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
-      transcribe: [
-        { id: 1, text: 'Understanding CSS and styling in web development.', timestamp: '0:00' },
-        { id: 2, text: 'CSS helps us create beautiful and responsive designs.', timestamp: '0:18' }
-      ],
-      voiceExtraction: 'CSS is essential for styling web pages and creating attractive user interfaces.',
-      summary: 'An overview of CSS and its role in modern web design and styling.',
-      pdfUrl: 'https://example.com/document3.pdf',
-      steps: [
-        { id: 1, timestamp: '0:00', description: 'Initial processing', metaTags: ['init', 'process'] },
-        { id: 2, timestamp: '0:18', description: 'Finalization step', metaTags: ['final', 'complete'] }
-      ]
+  useEffect(() => {
+    // Log page view
+    logPageView('Documents');
+    
+    // Fetch videos
+    fetchVideos();
+  }, []);
+
+  // Handle query parameter to open specific document
+  useEffect(() => {
+    if (router.query.video && videos && videos.length > 0) {
+      const video = videos.find(v => v.video_file_number === router.query.video);
+      if (video) {
+        handleRowClick(video);
+      }
     }
-  ]);
+  }, [router.query.video, videos]);
 
-  const handleRowClick = (document) => {
+  const fetchVideos = async () => {
+    try {
+      setLoading(true);
+      const response = await getVideosPanel({ page: 1, page_size: 100 });
+      if (response && response.videos && Array.isArray(response.videos)) {
+        // Map API response to document format
+        const mappedVideos = response.videos.map((video, index) => ({
+          id: video.id,
+          documentId: video.video_file_number || `DOC-${String(index + 1).padStart(3, '0')}`,
+          name: video.name || 'Untitled Video',
+          type: 'Video',
+          access: 'Public',
+          fileSize: video.video_size_bytes ? `${(video.video_size_bytes / (1024 * 1024)).toFixed(1)} MB` : 'N/A',
+          description: video.application_name || 'Video document',
+          createdBy: 'You',
+          createdDate: video.created_at ? new Date(video.created_at).toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric', 
+            year: 'numeric' 
+          }) : 'N/A',
+          createdOn: video.created_at ? new Date(video.created_at).toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric', 
+            year: 'numeric' 
+          }) : 'N/A',
+          avatar: 'https://ui-avatars.com/api/?name=You&background=random',
+          video_file_number: video.video_file_number,
+          status: video.status,
+          video_id: video.id
+        }));
+        setVideos(mappedVideos);
+      } else {
+        // Set empty array if no videos
+        setVideos([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch videos:', error);
+      // Set empty array on error
+      setVideos([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatTimestamp = (seconds) => {
+    if (!seconds && seconds !== 0) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const fetchDocumentData = async (videoFileNumber) => {
+    try {
+      const data = await getDocument(videoFileNumber);
+      setDocumentData(data || null);
+      
+      // Update selected document with real data
+      if (selectedDocument && data) {
+        const updatedDocument = {
+          ...selectedDocument,
+          transcript: data.transcript || null,
+          transcribe: (data.frames && Array.isArray(data.frames)) 
+            ? data.frames.map((frame, index) => ({
+                id: frame.frame_id || index + 1,
+                text: frame.description || frame.ocr_text || '',
+                timestamp: formatTimestamp(frame.timestamp)
+              }))
+            : [],
+          voiceExtraction: (data.frames && Array.isArray(data.frames))
+            ? data.frames.map(f => f.description || f.ocr_text || '').filter(Boolean).join(' ') 
+            : 'No voice extraction available',
+          summary: data.summary || 'No summary available',
+          steps: (data.frames && Array.isArray(data.frames))
+            ? data.frames.map((frame, index) => ({
+                id: frame.frame_id || index + 1,
+                timestamp: formatTimestamp(frame.timestamp),
+                description: frame.description || frame.ocr_text || 'Frame analysis',
+                metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
+              }))
+            : []
+        };
+        setSelectedDocument(updatedDocument);
+      }
+    } catch (error) {
+      console.error('Failed to fetch document:', error);
+      // Set empty data on error
+      setDocumentData(null);
+    }
+  };
+
+  // Removed dummy data - using real data from API
+
+  const handleRowClick = async (document) => {
+    if (!document) return;
+    
     setSelectedDocument(document);
     setDetailViewOpen(true);
     setActiveTab('transcribe'); // Reset to first tab when opening
+    setDocumentData(null); // Clear previous document data
+    
+    // Log document view
+    if (document && document.video_file_number) {
+      logDocumentView(document.video_file_number, {
+        video_id: document.id,
+        name: document.name || 'Unknown'
+      });
+      
+      // Fetch full document data if video_file_number is available
+      await fetchDocumentData(document.video_file_number);
+    } else {
+      // If no video_file_number, set empty data
+      setDocumentData(null);
+    }
   };
 
   const handleCloseDetail = () => {
@@ -106,9 +153,17 @@ export default function Document() {
     setSelectedDocument(null);
   };
 
-  const handleDelete = (e, id) => {
+  const handleDelete = async (e, id) => {
     e.stopPropagation(); // Prevent row click
-    setDocumentData(documentData.filter(item => item.id !== id));
+    try {
+      // TODO: Call delete API endpoint
+      // await deleteUpload(id);
+      // Refresh the list
+      await fetchVideos();
+    } catch (error) {
+      console.error('Failed to delete:', error);
+      alert('Failed to delete document. Please try again.');
+    }
   };
 
   const handleEdit = (e, document) => {
@@ -125,14 +180,14 @@ export default function Document() {
     description: 'Browse and manage your processed documents. View transcriptions, voice extractions, summaries, and PDF documents.',
     mainEntity: {
       '@type': 'ItemList',
-      numberOfItems: documentData.length,
-      itemListElement: documentData.map((doc, index) => ({
+      numberOfItems: videos?.length || 0,
+      itemListElement: (videos || []).map((doc, index) => ({
         '@type': 'ListItem',
         position: index + 1,
         item: {
           '@type': 'Document',
           name: doc.name,
-          description: doc.summary
+          description: doc.description || ''
         }
       }))
     }
@@ -167,14 +222,20 @@ export default function Document() {
                 </tr>
               </thead>
               <tbody>
-                {documentData.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan="8" className={styles.emptyState}>
+                      Loading documents...
+                    </td>
+                  </tr>
+                ) : !videos || videos.length === 0 ? (
                   <tr>
                     <td colSpan="8" className={styles.emptyState}>
                       No documents available
                     </td>
                   </tr>
                 ) : (
-                  documentData.map((item) => (
+                  videos.map((item, index) => (
                     <tr 
                       key={item.id} 
                       className={styles.documentTableRow}
@@ -256,11 +317,11 @@ export default function Document() {
         </Layout>
 
         {/* Document Detail View */}
-        {detailViewOpen && selectedDocument && (
+        {detailViewOpen && selectedDocument && selectedDocument !== null && (
           <div className={styles.detailOverlay} onClick={handleCloseDetail}>
             <div className={styles.detailContainer} onClick={(e) => e.stopPropagation()}>
               <div className={styles.detailHeader}>
-                <h2 className={styles.detailTitle}>{selectedDocument.name}</h2>
+                <h2 className={styles.detailTitle}>{selectedDocument?.name || 'Document'}</h2>
                 <button className={styles.closeButton} onClick={handleCloseDetail}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -337,12 +398,29 @@ export default function Document() {
                     aria-labelledby="transcribe-tab"
                   >
                     <div className={styles.transcribeContainer} role="region" aria-label="Transcription content">
-                      {selectedDocument.transcribe.map((item, index) => (
-                        <div key={item.id} className={styles.transcribeRow} itemScope itemType="https://schema.org/Text">
-                          <time className={styles.transcribeTimestamp} dateTime={item.timestamp}>{item.timestamp}</time>
-                          <p className={styles.transcribeText} itemProp="text">{item.text}</p>
-                        </div>
-                      ))}
+                      {(() => {
+                        // Get transcript from documentData or selectedDocument
+                        const transcript = documentData?.transcript || selectedDocument?.transcript;
+                        
+                        if (transcript) {
+                          return (
+                            <div className={styles.transcriptContainer}>
+                              <h3 className={styles.transcriptTitle}>Transcription</h3>
+                              <div className={styles.transcriptText}>
+                                {transcript.split('\n').map((line, index) => (
+                                  <p key={index}>{line || '\u00A0'}</p>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <div className={styles.emptyState}>
+                              No transcription data available. The video may still be processing.
+                            </div>
+                          );
+                        }
+                      })()}
                     </div>
                   </section>
                 )}
@@ -356,7 +434,19 @@ export default function Document() {
                     aria-labelledby="voice-tab"
                   >
                     <div className={styles.voiceExtractionBox} role="region" aria-label="Voice extraction content">
-                      <p>{selectedDocument.voiceExtraction}</p>
+                      <p>
+                        {(() => {
+                          // Use documentData if available
+                          if (documentData?.frames && Array.isArray(documentData.frames)) {
+                            const voiceText = documentData.frames
+                              .map(f => f.description || f.ocr_text || '')
+                              .filter(Boolean)
+                              .join(' ');
+                            return voiceText || 'No voice extraction data available. The video may still be processing.';
+                          }
+                          return selectedDocument?.voiceExtraction || 'No voice extraction data available. The video may still be processing.';
+                        })()}
+                      </p>
                     </div>
                   </section>
                 )}
@@ -370,13 +460,13 @@ export default function Document() {
                     aria-labelledby="summary-tab"
                   >
                     <div className={styles.summaryBox} role="region" aria-label="Document summary">
-                      <p>{selectedDocument.summary}</p>
+                      <p>{selectedDocument?.summary || documentData?.summary || 'No summary available. The video may still be processing.'}</p>
                     </div>
                   </section>
                 )}
 
                 {/* Audio Tab */}
-                {activeTab === 'audio' && selectedDocument.audioUrl && (
+                {activeTab === 'audio' && (
                   <section 
                     id="audio-panel"
                     className={styles.tabPanel}
@@ -384,26 +474,50 @@ export default function Document() {
                     aria-labelledby="audio-tab"
                   >
                     <div className={styles.audioContainer}>
-                      <audio
-                        controls
-                        className={styles.audioPlayer}
-                        aria-label={`Audio player for ${selectedDocument.name}`}
-                      >
-                        <source src={selectedDocument.audioUrl} type="audio/mpeg" />
-                        <source src={selectedDocument.audioUrl} type="audio/mp3" />
-                        Your browser does not support the audio element.
-                      </audio>
-                      <div className={styles.audioInfo}>
-                        <a
-                          href={selectedDocument.audioUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.audioLink}
-                          aria-label={`Download audio file for ${selectedDocument.name}`}
-                        >
-                          Download Audio
-                        </a>
-                      </div>
+                      {(() => {
+                        // Get audio URL from documentData or construct from video_file_number
+                        const audioUrl = documentData?.video_metadata?.audio_url || 
+                                        selectedDocument?.audioUrl ||
+                                        (documentData?.video_metadata?.video_file_number 
+                                          ? `/api/videos/file-number/${documentData.video_metadata.video_file_number}/audio`
+                                          : selectedDocument?.video_file_number
+                                          ? `/api/videos/file-number/${selectedDocument.video_file_number}/audio`
+                                          : null);
+                        
+                        if (audioUrl) {
+                          return (
+                            <>
+                              <audio
+                                controls
+                                className={styles.audioPlayer}
+                                aria-label={`Audio player for ${selectedDocument?.name || 'document'}`}
+                              >
+                                <source src={audioUrl} type="audio/mpeg" />
+                                <source src={audioUrl} type="audio/mp3" />
+                                Your browser does not support the audio element.
+                              </audio>
+                              <div className={styles.audioInfo}>
+                                <a
+                                  href={audioUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.audioLink}
+                                  download
+                                  aria-label={`Download audio file for ${selectedDocument?.name || 'document'}`}
+                                >
+                                  Download Audio
+                                </a>
+                              </div>
+                            </>
+                          );
+                        } else {
+                          return (
+                            <div className={styles.emptyState}>
+                              Audio extraction not available. The video may still be processing.
+                            </div>
+                          );
+                        }
+                      })()}
                     </div>
                   </section>
                 )}
@@ -417,23 +531,31 @@ export default function Document() {
                     aria-labelledby="pdf-tab"
                   >
                     <div className={styles.pdfContainer}>
-                      <iframe
-                        src={selectedDocument.pdfUrl}
-                        className={styles.pdfViewer}
-                        title={`PDF Document: ${selectedDocument.name}`}
-                        aria-label={`PDF viewer for ${selectedDocument.name}`}
-                      />
-                      <div className={styles.pdfActions}>
-                        <a
-                          href={selectedDocument.pdfUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.pdfLink}
-                          aria-label={`Open ${selectedDocument.name} PDF in new tab`}
-                        >
-                          Open in New Tab
-                        </a>
-                      </div>
+                      {selectedDocument?.pdfUrl || documentData?.video_metadata?.video_file_number || selectedDocument?.video_file_number ? (
+                        <>
+                          {/* TODO: Generate PDF URL from video_file_number or job_id */}
+                          <div className={styles.emptyState}>
+                            PDF generation is in progress. Please check back later or download the document from the process data page.
+                          </div>
+                          {(selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number) && (
+                            <div className={styles.pdfActions}>
+                              <a
+                                href={`/api/download/${selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number}?format=pdf`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={styles.pdfLink}
+                                aria-label={`Download PDF for ${selectedDocument?.name || 'document'}`}
+                              >
+                                Download PDF
+                              </a>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className={styles.emptyState}>
+                          PDF not available. The document may still be processing.
+                        </div>
+                      )}
                     </div>
                   </section>
                 )}
@@ -456,29 +578,49 @@ export default function Document() {
                           </tr>
                         </thead>
                         <tbody>
-                          {selectedDocument.steps && selectedDocument.steps.length > 0 ? (
-                            selectedDocument.steps.map((step) => (
-                              <tr key={step.id}>
-                                <td className={styles.stepTimestamp}>{step.timestamp}</td>
-                                <td className={styles.stepDescription}>{step.description}</td>
-                                <td className={styles.stepMetaTags}>
-                                  <div className={styles.metaTagsContainer}>
-                                    {step.metaTags.map((tag, index) => (
-                                      <span key={index} className={styles.metaTag}>
-                                        {tag}
-                                      </span>
-                                    ))}
-                                  </div>
+                          {(() => {
+                            // Use documentData if available, otherwise use selectedDocument
+                            let stepsData = [];
+                            
+                            if (documentData?.frames && Array.isArray(documentData.frames)) {
+                              stepsData = documentData.frames.map((frame, index) => ({
+                                id: frame.frame_id || index + 1,
+                                timestamp: formatTimestamp(frame.timestamp),
+                                description: frame.description || frame.ocr_text || 'Frame analysis',
+                                metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
+                              }));
+                            } else if (selectedDocument?.steps && Array.isArray(selectedDocument.steps)) {
+                              stepsData = selectedDocument.steps;
+                            }
+                            
+                            return stepsData && stepsData.length > 0 ? (
+                              stepsData.map((step, index) => (
+                                <tr key={step.id || index}>
+                                  <td className={styles.stepTimestamp}>{step.timestamp || '0:00'}</td>
+                                  <td className={styles.stepDescription}>{step.description || 'Frame analysis'}</td>
+                                  <td className={styles.stepMetaTags}>
+                                    <div className={styles.metaTagsContainer}>
+                                      {step.metaTags && Array.isArray(step.metaTags) && step.metaTags.length > 0 ? (
+                                        step.metaTags.map((tag, tagIndex) => (
+                                          <span key={tagIndex} className={styles.metaTag}>
+                                            {tag}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className={styles.metaTag}>frame</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan="3" className={styles.emptyState}>
+                                  No frame analysis steps available. The video may still be processing.
                                 </td>
                               </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan="3" className={styles.emptyState}>
-                                No steps available
-                              </td>
-                            </tr>
-                          )}
+                            );
+                          })()}
                         </tbody>
                       </table>
                     </div>

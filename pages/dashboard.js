@@ -1,9 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
+import { logPageView } from '../lib/activityLogger';
+import { getActivityStats } from '../lib/api';
 
 export default function Dashboard() {
+  useEffect(() => {
+    // Log page view
+    logPageView('Dashboard');
+    
+    // Optionally fetch activity stats
+    // getActivityStats(30).then(stats => {
+    //   console.log('Activity stats:', stats);
+    // }).catch(err => {
+    //   console.error('Failed to fetch activity stats:', err);
+    // });
+  }, []);
   const [dateRangePickerOpen, setDateRangePickerOpen] = useState(false);
   const [selectedStartDate, setSelectedStartDate] = useState(null);
   const [selectedEndDate, setSelectedEndDate] = useState(null);
