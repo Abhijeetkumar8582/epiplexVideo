@@ -4,7 +4,7 @@ import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logVideoUpload } from '../lib/activityLogger';
-import { uploadVideo, getStatus, getVideosPanel, deleteUpload } from '../lib/api';
+import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus } from '../lib/api';
 
 export default function ProcessData() {
   const router = useRouter();
@@ -48,21 +48,57 @@ export default function ProcessData() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [filterCalendarMonth, setFilterCalendarMonth] = useState(new Date());
 
+  // Real data from API
+  const [tableData, setTableData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newEntryId, setNewEntryId] = useState(null);
+  const [currentJobId, setCurrentJobId] = useState(null);
+  const [processingStatus, setProcessingStatus] = useState(null);
+  const [statusPollingInterval, setStatusPollingInterval] = useState(null);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const pageSize = 10;
+  const [isInitialMount, setIsInitialMount] = useState(true);
+  
+  // Validation state
+  const [nameError, setNameError] = useState(false);
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
+  const [transferProgress, setTransferProgress] = useState(0);
+  
+  // Dropdown and status view state
+  const [openDropdownId, setOpenDropdownId] = useState(null);
+  const [viewStatusItem, setViewStatusItem] = useState(null);
+
   useEffect(() => {
     // Log page view
     logPageView('Process Data');
-    // Fetch videos from API
-    fetchVideos();
+    // Fetch videos from API on initial load
+    fetchVideos(1);
+    setIsInitialMount(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchVideos = async () => {
+  // Refetch when page changes (skip initial mount)
+  useEffect(() => {
+    if (!isInitialMount) {
+      fetchVideos(currentPage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
+
+  const fetchVideos = async (page = currentPage) => {
     try {
       setLoading(true);
       const response = await getVideosPanel({ 
-        page: 1, 
-        page_size: 100,
+        page: page, 
+        page_size: pageSize,
         sort_by: 'updated_at',
-        sort_order: 'desc'
+        sort_order: 'desc',
+        status: filterData.status || null,
+        application_name: filterData.fileName || null
       });
       
       if (response && response.videos) {
@@ -101,11 +137,19 @@ export default function ProcessData() {
         });
         
         setTableData(mappedData);
+        
+        // Update pagination info
+        if (response.total !== undefined) {
+          setTotalRecords(response.total);
+          setTotalPages(Math.ceil(response.total / pageSize));
+        }
       }
     } catch (error) {
       console.error('Failed to fetch videos:', error);
       // Set empty array on error
       setTableData([]);
+      setTotalRecords(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
@@ -126,14 +170,6 @@ export default function ProcessData() {
 
   const statusOptions = ['uploaded', 'processing', 'completed', 'failed', 'cancelled'];
 
-  // Real data from API
-  const [tableData, setTableData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [newEntryId, setNewEntryId] = useState(null);
-  const [currentJobId, setCurrentJobId] = useState(null);
-  const [processingStatus, setProcessingStatus] = useState(null);
-  const [statusPollingInterval, setStatusPollingInterval] = useState(null);
-
   const handleDelete = async (e, id) => {
     e.stopPropagation(); // Prevent row click
     
@@ -153,6 +189,101 @@ export default function ProcessData() {
       alert(errorMessage);
     }
   };
+
+  const handleViewStatus = async (e, item) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    
+    if (!item.job_id) {
+      alert('No job ID found for this video');
+      return;
+    }
+    
+    try {
+      // Get current job status
+      const status = await getJobStatus(item.job_id);
+      setViewStatusItem({ ...item, status });
+      setProcessingOpen(true);
+      setCurrentJobId(item.job_id);
+      setProcessingStatus(status);
+      
+      // Update current step based on status
+      if (status) {
+        const stepProgress = status.step_progress || {};
+        const currentStepName = status.current_step || 'upload';
+        
+        // Map backend steps to frontend steps (0-6)
+        let stepIndex = 0;
+        
+        if (stepProgress.upload === 'completed') {
+          stepIndex = 0;
+        }
+        if (stepProgress.extract_audio === 'processing' || stepProgress.extract_audio === 'completed') {
+          stepIndex = 1;
+        }
+        if (stepProgress.transcribe === 'processing' || stepProgress.transcribe === 'completed') {
+          stepIndex = 1;
+        }
+        if (stepProgress.extract_frames === 'processing' || stepProgress.extract_frames === 'completed') {
+          stepIndex = 2;
+        }
+        if (stepProgress.analyze_frames === 'processing' || stepProgress.analyze_frames === 'completed') {
+          stepIndex = 3;
+        }
+        if (stepProgress.complete === 'processing') {
+          stepIndex = 4;
+        }
+        if (status.status === 'completed') {
+          stepIndex = 5;
+        }
+        
+        setCurrentStep(stepIndex);
+      }
+      
+      // Start polling for status updates
+      startStatusPolling(item.job_id);
+    } catch (error) {
+      console.error('Failed to get status:', error);
+      alert('Failed to load status. Please try again.');
+    }
+  };
+
+  const handleRetry = async (e, item) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    
+    if (!confirm('Are you sure you want to retry processing this video?')) {
+      return;
+    }
+    
+    try {
+      await retryUpload(item.id);
+      // Refresh the list
+      await fetchVideos();
+      alert('Video processing restarted successfully');
+    } catch (error) {
+      console.error('Failed to retry:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to retry processing. Please try again.';
+      alert(errorMessage);
+    }
+  };
+
+  const toggleDropdown = (e, itemId) => {
+    e.stopPropagation();
+    setOpenDropdownId(openDropdownId === itemId ? null : itemId);
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setOpenDropdownId(null);
+    };
+    
+    if (openDropdownId) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [openDropdownId]);
 
   const handleEdit = (id) => {
     console.log('Edit item:', id);
@@ -185,7 +316,7 @@ export default function ProcessData() {
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) {
-      setFormData(prev => ({ ...prev, file }));
+      setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
       // Simulate upload
       setIsUploading(true);
       setUploadProgress(0);
@@ -205,7 +336,7 @@ export default function ProcessData() {
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
-      setFormData(prev => ({ ...prev, file }));
+      setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
       setIsUploading(true);
       setUploadProgress(0);
       const interval = setInterval(() => {
@@ -227,19 +358,51 @@ export default function ProcessData() {
     setIsUploading(false);
   };
 
+  const handleUrlInputChange = (e) => {
+    const value = e.target.value;
+    // Clear file when URL is entered
+    setFormData(prev => ({ ...prev, fileUrl: value, file: null }));
+    setUploadProgress(0);
+    setIsUploading(false);
+  };
+
   const handleStart = async () => {
-    if (!formData.name || (!formData.link && !formData.file && !formData.fileUrl)) {
+    // Validate name field
+    if (!formData.name || formData.name.trim() === '') {
+      setNameError(true);
+      return;
+    }
+    
+    if (!formData.link && !formData.file && !formData.fileUrl) {
       return;
     }
 
     // If file is selected, upload it
     if (formData.file) {
       try {
+        // Show transfer dialog
+        setShowTransferDialog(true);
+        setTransferProgress(0);
+        setDialogOpen(false);
+        
+        // Simulate transfer progress
+        const progressInterval = setInterval(() => {
+          setTransferProgress(prev => {
+            if (prev >= 90) {
+              clearInterval(progressInterval);
+              return 90;
+            }
+            return prev + 10;
+          });
+        }, 200);
+        
         setIsUploading(true);
         setUploadProgress(0);
         
         const response = await uploadVideo(formData.file, (progress) => {
           setUploadProgress(progress);
+          // Update transfer progress based on upload progress
+          setTransferProgress(Math.min(90, progress * 0.9));
         }, {
           name: formData.name,
           application_name: formData.application_name,
@@ -247,6 +410,15 @@ export default function ProcessData() {
           language_code: formData.language_code,
           priority: formData.priority || 'normal'
         });
+        
+        // Complete transfer progress
+        setTransferProgress(100);
+        clearInterval(progressInterval);
+        
+        // Wait a moment to show completion, then close transfer dialog
+        setTimeout(() => {
+          setShowTransferDialog(false);
+        }, 1000);
         
         // Log video upload
         if (response.data && response.data.id) {
@@ -264,11 +436,11 @@ export default function ProcessData() {
         
         setNewEntryId(entryId);
         setCurrentJobId(jobId);
-        setDialogOpen(false);
         setProcessingOpen(true);
         setCurrentStep(0);
         setFormData({ name: '', link: '', file: null, fileUrl: '' });
         setIsUploading(false);
+        setNameError(false);
         
         // Start polling for status if job_id is available
         if (jobId) {
@@ -276,6 +448,7 @@ export default function ProcessData() {
         }
       } catch (error) {
         console.error('Upload failed:', error);
+        setShowTransferDialog(false);
         // Show detailed error message
         let errorMessage = 'Failed to upload video. Please try again.';
         if (error.response) {
@@ -297,6 +470,7 @@ export default function ProcessData() {
         alert(errorMessage);
         setIsUploading(false);
         setUploadProgress(0);
+        setTransferProgress(0);
       }
     } else {
       // For URL or link-based uploads, create entry without file
@@ -455,13 +629,17 @@ export default function ProcessData() {
         setStatusDropdownOpen(false);
         setDatePickerOpen(false);
       }
+      // Close more button dropdown
+      if (!event.target.closest(`.${styles.moreButtonContainer}`)) {
+        setOpenDropdownId(null);
+      }
     };
 
-    if (userDropdownOpen || statusDropdownOpen || datePickerOpen) {
+    if (userDropdownOpen || statusDropdownOpen || datePickerOpen || openDropdownId) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [userDropdownOpen, statusDropdownOpen, datePickerOpen]);
+  }, [userDropdownOpen, statusDropdownOpen, datePickerOpen, openDropdownId]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -469,6 +647,10 @@ export default function ProcessData() {
       ...prev,
       [name]: value
     }));
+    // Clear error when user starts typing
+    if (name === 'name' && nameError) {
+      setNameError(false);
+    }
   };
 
   const getStatusClass = (status) => {
@@ -880,19 +1062,22 @@ export default function ProcessData() {
                       </td>
                       <td>
                         <div className={styles.tableActions}>
-                          <button 
-                            className={styles.viewButton}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (item.video_file_number) {
-                                router.push(`/document?video=${item.video_file_number}`);
-                              } else {
-                                router.push(`/document`);
-                              }
-                            }}
-                          >
-                            View
-                          </button>
+                          {/* View button - only show when status is completed */}
+                          {item.status === 'completed' && (
+                            <button 
+                              className={styles.viewButton}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (item.video_file_number) {
+                                  router.push(`/document?video=${item.video_file_number}`);
+                                } else {
+                                  router.push(`/document`);
+                                }
+                              }}
+                            >
+                              View
+                            </button>
+                          )}
                           <button 
                             className={styles.deleteButton}
                             onClick={(e) => handleDelete(e, item.id)}
@@ -903,13 +1088,52 @@ export default function ProcessData() {
                               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                             </svg>
                           </button>
-                          <button className={styles.moreButton}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <circle cx="12" cy="12" r="1"></circle>
-                              <circle cx="19" cy="12" r="1"></circle>
-                              <circle cx="5" cy="12" r="1"></circle>
-                            </svg>
-                          </button>
+                          {/* 3-dot menu - only show when status is NOT completed */}
+                          {item.status !== 'completed' && (
+                            <div className={styles.moreButtonContainer}>
+                              <button 
+                                className={styles.moreButton}
+                                onClick={(e) => toggleDropdown(e, item.id)}
+                              >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <circle cx="12" cy="12" r="1"></circle>
+                                  <circle cx="19" cy="12" r="1"></circle>
+                                  <circle cx="5" cy="12" r="1"></circle>
+                                </svg>
+                              </button>
+                              {openDropdownId === item.id && (
+                                <div className={styles.dropdownMenu}>
+                                  {/* View Status - show when processing or uploaded */}
+                                  {(item.status === 'processing' || item.status === 'uploaded') && (
+                                    <button
+                                      className={styles.dropdownItem}
+                                      onClick={(e) => handleViewStatus(e, item)}
+                                    >
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                      </svg>
+                                      View Status
+                                    </button>
+                                  )}
+                                  {/* Retry - only show when failed */}
+                                  {item.status === 'failed' && (
+                                    <button
+                                      className={styles.dropdownItem}
+                                      onClick={(e) => handleRetry(e, item)}
+                                    >
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <polyline points="23 4 23 10 17 10"></polyline>
+                                        <polyline points="1 20 1 14 7 14"></polyline>
+                                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                      </svg>
+                                      Retry
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -918,6 +1142,63 @@ export default function ProcessData() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {!loading && totalPages > 1 && (
+            <div className={styles.paginationContainer}>
+              <div className={styles.paginationInfo}>
+                Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalRecords)} of {totalRecords} records
+              </div>
+              <div className={styles.paginationControls}>
+                <button
+                  className={styles.paginationButton}
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                  </svg>
+                  Previous
+                </button>
+                
+                <div className={styles.paginationNumbers}>
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    
+                    return (
+                      <button
+                        key={pageNum}
+                        className={`${styles.paginationNumber} ${currentPage === pageNum ? styles.paginationNumberActive : ''}`}
+                        onClick={() => setCurrentPage(pageNum)}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+                
+                <button
+                  className={styles.paginationButton}
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
         </Layout>
 
         {/* Create New Dialog */}
@@ -943,90 +1224,101 @@ export default function ProcessData() {
                     name="name"
                     value={formData.name}
                     onChange={handleInputChange}
-                    className={styles.input}
+                    className={`${styles.input} ${nameError ? styles.inputError : ''}`}
                     placeholder="Enter name"
                     required
                   />
+                  {nameError && (
+                    <div className={styles.errorMessage}>Name is required</div>
+                  )}
                 </div>
 
-                {/* File Upload Area */}
-                <div 
-                  className={`${styles.uploadArea} ${isDragging ? styles.uploadAreaDragging : ''}`}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  <svg className={styles.uploadIcon} width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                  </svg>
-                  <p className={styles.uploadText}>
-                    Drag & Drop or <button type="button" className={styles.uploadLink} onClick={() => document.getElementById('file-input').click()}>Choose file</button> to upload
-                  </p>
-                  <p className={styles.uploadFormats}>Supported formats: MP4, AVI, MOV, MP3, WAV</p>
-                  <input
-                    type="file"
-                    id="file-input"
-                    className={styles.fileInput}
-                    onChange={handleFileSelect}
-                    accept=".mp4,.avi,.mov,.mp3,.wav"
-                  />
-                </div>
-
-                {/* Uploaded File Status */}
-                {formData.file && (
-                  <div className={styles.uploadedFile}>
-                    <div className={styles.uploadedFileIcon}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                        <line x1="16" y1="13" x2="8" y2="13"></line>
-                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                {/* File Upload Area - Hide when URL is entered */}
+                {!formData.fileUrl && (
+                  <>
+                    <div 
+                      className={`${styles.uploadArea} ${isDragging ? styles.uploadAreaDragging : ''}`}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                    >
+                      <svg className={styles.uploadIcon} width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
                       </svg>
+                      <p className={styles.uploadText}>
+                        Drag & Drop or <button type="button" className={styles.uploadLink} onClick={() => document.getElementById('file-input').click()}>Choose file</button> to upload
+                      </p>
+                      <p className={styles.uploadFormats}>Supported formats: MP4, AVI, MOV, MP3, WAV</p>
+                      <input
+                        type="file"
+                        id="file-input"
+                        className={styles.fileInput}
+                        onChange={handleFileSelect}
+                        accept=".mp4,.avi,.mov,.mp3,.wav"
+                      />
                     </div>
-                    <div className={styles.uploadedFileInfo}>
-                      <div className={styles.uploadedFileName}>{formData.file.name}</div>
-                      <div className={styles.uploadedFileSize}>{(formData.file.size / (1024 * 1024)).toFixed(2)} MB</div>
-                      {isUploading && (
-                        <div className={styles.uploadProgress}>
-                          <div className={styles.uploadProgressBar}>
-                            <div className={styles.uploadProgressFill} style={{ width: `${uploadProgress}%` }}></div>
-                          </div>
-                          <span className={styles.uploadProgressText}>{uploadProgress}%</span>
+
+                    {/* Uploaded File Status */}
+                    {formData.file && (
+                      <div className={styles.uploadedFile}>
+                        <div className={styles.uploadedFileIcon}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                          </svg>
                         </div>
-                      )}
-                    </div>
-                    <button className={styles.uploadedFileRemove} onClick={handleRemoveFile} aria-label="Remove file">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                      </svg>
-                    </button>
+                        <div className={styles.uploadedFileInfo}>
+                          <div className={styles.uploadedFileName}>{formData.file.name}</div>
+                          <div className={styles.uploadedFileSize}>{(formData.file.size / (1024 * 1024)).toFixed(2)} MB</div>
+                          {isUploading && (
+                            <div className={styles.uploadProgress}>
+                              <div className={styles.uploadProgressBar}>
+                                <div className={styles.uploadProgressFill} style={{ width: `${uploadProgress}%` }}></div>
+                              </div>
+                              <span className={styles.uploadProgressText}>{uploadProgress}%</span>
+                            </div>
+                          )}
+                        </div>
+                        <button className={styles.uploadedFileRemove} onClick={handleRemoveFile} aria-label="Remove file">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Separator - Only show when neither file nor URL is selected */}
+                {!formData.file && !formData.fileUrl && (
+                  <div className={styles.uploadSeparator}>
+                    <span>or</span>
                   </div>
                 )}
 
-                {/* Separator */}
-                <div className={styles.uploadSeparator}>
-                  <span>or</span>
-                </div>
-
-                {/* Import from URL */}
-                <div className={styles.urlImportSection}>
-                  <label htmlFor="fileUrl" className={styles.label}>Import from URL</label>
-                  <div className={styles.urlInputGroup}>
-                    <input
-                      type="url"
-                      id="fileUrl"
-                      name="fileUrl"
-                      value={formData.fileUrl}
-                      onChange={handleInputChange}
-                      className={styles.urlInput}
-                      placeholder="Add file URL"
-                    />
-                    <button type="button" className={styles.urlUploadButton}>Upload</button>
+                {/* Import from URL - Hide when file is selected */}
+                {!formData.file && (
+                  <div className={styles.urlImportSection}>
+                    <label htmlFor="fileUrl" className={styles.label}>Import from URL</label>
+                    <div className={styles.urlInputGroup}>
+                      <input
+                        type="url"
+                        id="fileUrl"
+                        name="fileUrl"
+                        value={formData.fileUrl}
+                        onChange={handleUrlInputChange}
+                        className={styles.urlInput}
+                        placeholder="Add file URL"
+                      />
+                      <button type="button" className={styles.urlUploadButton}>Upload</button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
               <div className={styles.dialogFooter}>
                 <a href="#" className={styles.helpCenterLink}>
@@ -1116,6 +1408,78 @@ export default function ProcessData() {
                   }
                   return null;
                 })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Data Transfer Dialog */}
+        {showTransferDialog && (
+          <div className={styles.transferDialogOverlay}>
+            <div className={styles.transferDialog}>
+              <div className={styles.transferHeader}>
+                <h3 className={styles.transferTitle}>Storing Video to Database</h3>
+              </div>
+              <div className={styles.transferContent}>
+                {/* Video Side */}
+                <div className={styles.transferSide}>
+                  <div className={styles.transferIconContainer}>
+                    <div className={styles.videoIcon}>
+                      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                      </svg>
+                    </div>
+                    <div className={styles.transferLabel}>Video File</div>
+                    <div className={styles.transferFileName}>{formData.file?.name || 'Video.mp4'}</div>
+                  </div>
+                </div>
+
+                {/* Animated Arrow */}
+                <div className={styles.transferArrowContainer}>
+                  <div className={styles.transferArrow}>
+                    <svg width="80" height="40" viewBox="0 0 80 40" fill="none">
+                      <path
+                        d="M0 20 L60 20 M60 20 L50 10 M60 20 L50 30"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className={styles.arrowPath}
+                      />
+                      {/* Animated dots */}
+                      <circle cx="10" cy="20" r="3" className={styles.arrowDot} style={{ animationDelay: '0s' }}></circle>
+                      <circle cx="30" cy="20" r="3" className={styles.arrowDot} style={{ animationDelay: '0.3s' }}></circle>
+                      <circle cx="50" cy="20" r="3" className={styles.arrowDot} style={{ animationDelay: '0.6s' }}></circle>
+                    </svg>
+                  </div>
+                  <div className={styles.transferProgress}>
+                    <div className={styles.transferProgressBar}>
+                      <div 
+                        className={styles.transferProgressFill} 
+                        style={{ width: `${transferProgress}%` }}
+                      ></div>
+                    </div>
+                    <div className={styles.transferProgressText}>{transferProgress}%</div>
+                  </div>
+                </div>
+
+                {/* Database Side */}
+                <div className={styles.transferSide}>
+                  <div className={styles.transferIconContainer}>
+                    <div className={styles.databaseIcon}>
+                      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                      </svg>
+                    </div>
+                    <div className={styles.transferLabel}>Database</div>
+                    <div className={styles.transferStatus}>
+                      {transferProgress < 100 ? 'Storing...' : 'Stored ✓'}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

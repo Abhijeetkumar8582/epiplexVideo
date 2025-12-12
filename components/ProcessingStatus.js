@@ -3,9 +3,11 @@ import styles from '../styles/ProcessingStatus.module.css';
 
 const STEPS = [
   { id: 'upload', label: 'Upload', icon: '📤', description: 'Video uploaded' },
-  { id: 'analyze', label: 'Analyze', icon: '🔍', description: 'Extracting transcript' },
+  { id: 'extract_audio', label: 'Extract Audio', icon: '🎵', description: 'Extracting audio from video' },
+  { id: 'transcribe', label: 'Transcribe', icon: '🔍', description: 'Transcribing audio' },
   { id: 'extract_frames', label: 'Extract Keyframes', icon: '🎬', description: 'Extracting frames' },
-  { id: 'process', label: 'Process', icon: '⚙️', description: 'Generating document' },
+  { id: 'analyze_frames', label: 'Analyze Frames', icon: '⚙️', description: 'Analyzing frames with GPT' },
+  { id: 'complete', label: 'Complete', icon: '✅', description: 'Processing complete' },
 ];
 
 export default function ProcessingStatus({ status }) {
@@ -94,12 +96,24 @@ export default function ProcessingStatus({ status }) {
                 )}
               </div>
 
-              {/* Show transcript when analyze step is completed */}
-              {isExpanded && step.id === 'analyze' && status.transcript && (
+              {/* Show transcript when transcribe step is completed */}
+              {isExpanded && step.id === 'transcribe' && status.transcript && (
                 <div className={styles.stepData}>
                   <h4>Transcript</h4>
                   <div className={styles.transcriptContainer}>
                     <p className={styles.transcriptText}>{status.transcript}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Show audio info when extract_audio step is completed */}
+              {isExpanded && step.id === 'extract_audio' && (
+                <div className={styles.stepData}>
+                  <h4>Audio Extraction</h4>
+                  <div className={styles.transcriptContainer}>
+                    <p className={styles.transcriptText}>
+                      Audio has been successfully extracted from the video and is ready for transcription.
+                    </p>
                   </div>
                 </div>
               )}

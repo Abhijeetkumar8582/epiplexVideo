@@ -3,20 +3,54 @@ import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView } from '../lib/activityLogger';
-import { getActivityStats } from '../lib/api';
+import { getActivityStats, getVideoStats } from '../lib/api';
 
 export default function Dashboard() {
+  const [loading, setLoading] = useState(true);
+  const [videoStats, setVideoStats] = useState(null);
+  const [activityStats, setActivityStats] = useState(null);
+  const [error, setError] = useState(null);
+
   useEffect(() => {
     // Log page view
     logPageView('Dashboard');
     
-    // Optionally fetch activity stats
-    // getActivityStats(30).then(stats => {
-    //   console.log('Activity stats:', stats);
-    // }).catch(err => {
-    //   console.error('Failed to fetch activity stats:', err);
-    // });
+    // Fetch dashboard data
+    fetchDashboardData();
   }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Fetch video statistics (required) and activity statistics (optional) in parallel
+      const [videoData, activityData] = await Promise.allSettled([
+        getVideoStats(),
+        getActivityStats(30).catch(err => {
+          console.warn('Failed to fetch activity stats:', err);
+          return null;
+        })
+      ]);
+      
+      // Handle video stats (required)
+      if (videoData.status === 'fulfilled') {
+        setVideoStats(videoData.value);
+      } else {
+        throw videoData.reason;
+      }
+      
+      // Handle activity stats (optional)
+      if (activityData.status === 'fulfilled' && activityData.value) {
+        setActivityStats(activityData.value);
+      }
+    } catch (err) {
+      console.error('Failed to fetch dashboard data:', err);
+      setError('Failed to load dashboard data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
   const [dateRangePickerOpen, setDateRangePickerOpen] = useState(false);
   const [selectedStartDate, setSelectedStartDate] = useState(null);
   const [selectedEndDate, setSelectedEndDate] = useState(null);
@@ -25,99 +59,183 @@ export default function Dashboard() {
   const [startTime, setStartTime] = useState({ hours: '00', minutes: '00' });
   const [endTime, setEndTime] = useState({ hours: '23', minutes: '59' });
   const [dateRangeText, setDateRangeText] = useState('Oct 18 - Nov 18');
-  // KPI Cards Data
-  const kpiCards = [
+
+  // Format number for display
+  const formatNumber = (num) => {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+  };
+
+  // Format file size
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '0 B';
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  // Format duration
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0s';
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+  };
+
+  // Calculate KPI Cards Data from real stats
+  const kpiCards = videoStats ? [
     {
       id: 'total-processed',
       title: 'Total Processed',
-      value: '132.5K',
-      change: '+8.3%',
-      isPositive: true,
-      description: 'Up 8.3% compared to last month',
-      progress: 90
+      value: formatNumber(videoStats.completedVideos || 0),
+      change: (videoStats.momGrowth || 0) >= 0 ? `+${videoStats.momGrowth || 0}%` : `${videoStats.momGrowth || 0}%`,
+      isPositive: (videoStats.momGrowth || 0) >= 0,
+      description: (videoStats.momGrowth || 0) >= 0 
+        ? `Up ${videoStats.momGrowth || 0}% compared to last month`
+        : `Down ${Math.abs(videoStats.momGrowth || 0)}% compared to last month`,
+      progress: (videoStats.totalVideos || 0) > 0 
+        ? Math.min(100, ((videoStats.completedVideos || 0) / (videoStats.totalVideos || 1)) * 100)
+        : 0
     },
     {
       id: 'total-documents',
-      title: 'Total Documents',
-      value: '52.8K',
-      change: '+8.3%',
-      isPositive: true,
-      description: 'Steady increase in Q3 and Q4',
-      progress: 90
+      title: 'Total Videos',
+      value: formatNumber(videoStats.totalVideos || 0),
+      change: (videoStats.momGrowth || 0) >= 0 ? `+${videoStats.momGrowth || 0}%` : `${videoStats.momGrowth || 0}%`,
+      isPositive: (videoStats.momGrowth || 0) >= 0,
+      description: `${videoStats.currentMonthVideos || 0} videos this month`,
+      progress: 100
     },
     {
       id: 'success-rate',
       title: 'Success Rate',
-      value: '98.6%',
-      change: '+8.3%',
-      isPositive: true,
-      description: 'Average success rate is 95%',
-      progress: 90
+      value: `${((videoStats.successRate || 0).toFixed(1))}%`,
+      change: (videoStats.successRate || 0) >= 95 ? '+0%' : '-0%',
+      isPositive: (videoStats.successRate || 0) >= 95,
+      description: `${videoStats.completedVideos || 0} completed out of ${videoStats.totalVideos || 0} total`,
+      progress: videoStats.successRate || 0
     },
     {
-      id: 'processing-time',
-      title: 'Processing Time',
-      value: '72%',
-      change: '-8.3%',
-      isPositive: false,
-      description: 'Time improved by 4% from last month',
-      progress: 70
+      id: 'processing-queue',
+      title: 'Processing Queue',
+      value: (videoStats.processingVideos || 0).toString(),
+      change: (videoStats.processingVideos || 0) > 0 ? 'Active' : 'Empty',
+      isPositive: (videoStats.processingVideos || 0) === 0,
+      description: `${videoStats.processingVideos || 0} videos in queue`,
+      progress: (videoStats.totalVideos || 0) > 0 
+        ? ((videoStats.processingVideos || 0) / (videoStats.totalVideos || 1)) * 100
+        : 0
     }
-  ];
+  ] : [];
 
-  // Graph Cards Data
-  const graphCards = [
+  // Graph Cards Data from real stats
+  const graphCards = videoStats ? [
     {
       id: 'monthly-processing',
       title: 'Monthly Processing',
-      value: '8,944',
-      change: '+2.1% vs last month',
-      isPositive: true,
-      type: 'line'
+      value: (videoStats.currentMonthVideos || 0).toString(),
+      change: (videoStats.momGrowth || 0) >= 0 ? `+${videoStats.momGrowth || 0}% vs last month` : `${videoStats.momGrowth || 0}% vs last month`,
+      isPositive: (videoStats.momGrowth || 0) >= 0,
+      type: 'line',
+      data: videoStats.monthlyData ? Object.entries(videoStats.monthlyData).reverse().map(([key, value]) => ({
+        month: key,
+        count: value || 0
+      })) : []
     },
     {
-      id: 'quarterly-growth',
-      title: 'Quarterly Growth',
-      value: '18,944',
-      change: '+2.1% vs last Quarter',
+      id: 'daily-processing',
+      title: 'Daily Processing (30 days)',
+      value: videoStats.dailyData ? Object.values(videoStats.dailyData).reduce((sum, val) => sum + (val || 0), 0).toString() : '0',
+      change: `${videoStats.completedVideos || 0} completed videos`,
       isPositive: true,
-      type: 'bar'
+      type: 'bar',
+      data: videoStats.dailyData ? Object.entries(videoStats.dailyData).reverse().slice(0, 30).map(([key, value]) => ({
+        date: key,
+        count: value || 0
+      })) : []
     }
-  ];
+  ] : [];
 
-  // Insight Cards Data
-  const insightCards = [
+  // Insight Cards Data from real stats
+  const getTopApplication = () => {
+    if (!videoStats || !videoStats.appDistribution) return null;
+    const entries = Object.entries(videoStats.appDistribution);
+    if (entries.length === 0) return null;
+    const sorted = entries.sort((a, b) => b[1] - a[1]);
+    return sorted[0];
+  };
+
+  const getTopLanguage = () => {
+    if (!videoStats || !videoStats.languageDistribution) return null;
+    const entries = Object.entries(videoStats.languageDistribution);
+    if (entries.length === 0) return null;
+    const sorted = entries.sort((a, b) => b[1] - a[1]);
+    return sorted[0];
+  };
+
+  const getBestMonth = () => {
+    if (!videoStats || !videoStats.monthlyData) return null;
+    const entries = Object.entries(videoStats.monthlyData);
+    if (entries.length === 0) return null;
+    const sorted = entries.sort((a, b) => b[1] - a[1]);
+    const [monthKey, count] = sorted[0];
+    const [year, month] = monthKey.split('-');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return { month: monthNames[parseInt(month) - 1], count };
+  };
+
+  const topApp = getTopApplication();
+  const topLang = getTopLanguage();
+  const bestMonth = getBestMonth();
+
+  const insightCards = videoStats ? [
     {
-      id: 'top-documents',
-      title: 'Top Documents by Type',
+      id: 'status-distribution',
+      title: 'Status Distribution',
       type: 'donut',
-      data: { main: 'Video', percentage: 65, other: 35 }
+      data: {
+        main: 'Completed',
+        percentage: (videoStats.totalVideos || 0) > 0 
+          ? Math.round(((videoStats.completedVideos || 0) / (videoStats.totalVideos || 1)) * 100)
+          : 0,
+        other: 100 - ((videoStats.totalVideos || 0) > 0 
+          ? Math.round(((videoStats.completedVideos || 0) / (videoStats.totalVideos || 1)) * 100)
+          : 0)
+      }
     },
     {
       id: 'best-month',
       title: 'Best Month',
-      value: '15,800',
-      label: 'July'
+      value: bestMonth ? bestMonth.count.toString() : '0',
+      label: bestMonth ? bestMonth.month : 'N/A'
     },
     {
-      id: 'slowest-month',
-      title: 'Slowest Month',
-      value: '7,200',
-      label: 'Feb'
+      id: 'total-frames',
+      title: 'Total Frames Analyzed',
+      value: formatNumber(videoStats.totalFrames || 0),
+      label: `${videoStats.frameAnalysisRate || 0}% with GPT`
     },
     {
-      id: 'user-distribution',
-      title: 'User Distribution',
-      value: '54%',
-      breakdown: '44% Internal, 2% External'
+      id: 'top-application',
+      title: 'Top Application',
+      value: topApp ? (topApp[0] || 'N/A') : 'N/A',
+      percentage: topApp && (videoStats.totalVideos || 0) > 0
+        ? `${Math.round(((topApp[1] || 0) / (videoStats.totalVideos || 1)) * 100)}% of total`
+        : '0% of total'
     },
     {
-      id: 'age-group',
-      title: 'Dominant Category',
-      value: '26-35',
-      percentage: '38% of total'
+      id: 'top-language',
+      title: 'Top Language',
+      value: topLang ? (topLang[0] || 'N/A').toUpperCase() : 'N/A',
+      percentage: topLang && (videoStats.totalVideos || 0) > 0
+        ? `${Math.round(((topLang[1] || 0) / (videoStats.totalVideos || 1)) * 100)}% of total`
+        : '0% of total'
     }
-  ];
+  ] : [];
 
   // Sample metrics data (keeping for structured data)
   const metrics = [
@@ -457,10 +575,9 @@ export default function Dashboard() {
         keywords="dashboard, analytics, document processing, KPI, metrics, business intelligence, data visualization, document analytics, processing insights"
         structuredData={structuredData}
       />
-      <div className={styles.dashboard}>
-        <Layout>
-          {/* Top Header */}
-          <header className={styles.dashboardHeader}>
+      <Layout>
+        {/* Top Header */}
+        <header className={styles.dashboardHeader}>
             <h1 className={styles.dashboardPageTitle}>Dashboard</h1>
             <div className={styles.headerActions}>
               <button 
@@ -487,129 +604,295 @@ export default function Dashboard() {
           </header>
 
           <main className={styles.dashboardMain}>
-            {/* KPI Cards Section */}
-            <section className={styles.kpiSection}>
-              <div className={styles.kpiGrid}>
-                {kpiCards.map((kpi) => (
-                  <article key={kpi.id} className={styles.kpiCard}>
-                    <button className={styles.kpiCardArrow} aria-label="View details">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                      </svg>
-                    </button>
-                    <h3 className={styles.kpiCardTitle}>{kpi.title}</h3>
-                    <div className={styles.kpiCardValue}>{kpi.value}</div>
-                    <div className={`${styles.kpiCardChange} ${kpi.isPositive ? styles.kpiChangePositive : styles.kpiChangeNegative}`}>
-                      <span>{kpi.isPositive ? '▲' : '▼'}</span>
-                      <span>{kpi.change}</span>
-                    </div>
-                    <p className={styles.kpiCardDescription}>{kpi.description}</p>
-                    <div className={styles.kpiProgressBar}>
-                      <div className={styles.kpiProgressTrack}>
-                        <div 
-                          className={styles.kpiProgressDot}
-                          style={{ left: `${kpi.progress}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  </article>
-                ))}
+            {loading && (
+              <div className={styles.loadingContainer}>
+                <div className={styles.loadingSpinner}>
+                  <div className={styles.spinner}></div>
+                </div>
+                <p className={styles.loadingText}>Loading dashboard data...</p>
               </div>
-            </section>
+            )}
+            
+            {error && (
+              <div className={styles.errorContainer}>
+                <div className={styles.errorIcon}>
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  </svg>
+                </div>
+                <h3 className={styles.errorTitle}>Unable to Load Dashboard</h3>
+                <p className={styles.errorMessage}>{error}</p>
+                <button 
+                  onClick={fetchDashboardData}
+                  className={styles.retryButton}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                  Retry
+                </button>
+              </div>
+            )}
 
-            {/* Graph Cards Section */}
-            <section className={styles.graphSection}>
-              <div className={styles.graphGrid}>
-                {graphCards.map((graph) => (
-                  <article key={graph.id} className={styles.graphCard}>
-                    <h3 className={styles.graphCardTitle}>{graph.title}</h3>
-                    <div className={styles.graphCardValue}>{graph.value}</div>
-                    <div className={`${styles.graphCardChange} ${graph.isPositive ? styles.kpiChangePositive : styles.kpiChangeNegative}`}>
-                      {graph.isPositive ? '▲' : '▼'} {graph.change}
-                    </div>
-                    <div className={styles.graphPlaceholder}>
-                      {graph.type === 'line' ? (
-                        <svg width="100%" height="200" viewBox="0 0 400 200" preserveAspectRatio="none">
-                          <polyline
-                            points="0,180 40,160 80,140 120,120 160,100 200,80 240,90 280,70 320,60 360,50 400,40"
-                            fill="none"
-                            stroke="#3b82f6"
-                            strokeWidth="3"
-                          />
-                          <polyline
-                            points="0,180 40,160 80,140 120,120 160,100 200,80 240,90 280,70 320,60 360,50 400,40"
-                            fill="url(#lineGradient)"
-                            opacity="0.3"
-                          />
-                          <defs>
-                            <linearGradient id="lineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
-                              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                      ) : (
-                        <svg width="100%" height="200" viewBox="0 0 400 200" preserveAspectRatio="none">
-                          <rect x="20" y="120" width="60" height="80" fill="#e5e7eb" />
-                          <rect x="100" y="100" width="60" height="100" fill="#e5e7eb" />
-                          <rect x="180" y="60" width="60" height="140" fill="#3b82f6" />
-                          <rect x="260" y="90" width="60" height="110" fill="#e5e7eb" />
-                          <rect x="340" y="110" width="60" height="90" fill="#e5e7eb" />
-                        </svg>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
+            {!loading && !error && videoStats && kpiCards && kpiCards.length > 0 && (
+              <>
+                {/* KPI Cards Section */}
+                <section className={styles.kpiSection}>
+                  <div className={styles.kpiGrid}>
+                    {kpiCards.map((kpi) => {
+                      // Get icon, gradient, and accent color based on KPI type
+                      const getKpiConfig = () => {
+                        switch(kpi.id) {
+                          case 'total-processed':
+                            return {
+                              icon: (
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                </svg>
+                              ),
+                              gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+                              accent: '#f5576c'
+                            };
+                          case 'total-documents':
+                            return {
+                              icon: (
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                  <polyline points="14 2 14 8 20 8"></polyline>
+                                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                                </svg>
+                              ),
+                              gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                              accent: '#764ba2'
+                            };
+                          case 'success-rate':
+                            return {
+                              icon: (
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                </svg>
+                              ),
+                              gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+                              accent: '#00f2fe'
+                            };
+                          case 'processing-queue':
+                            return {
+                              icon: (
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <circle cx="12" cy="12" r="10"></circle>
+                                  <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                              ),
+                              gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+                              accent: '#fee140'
+                            };
+                          default:
+                            return {
+                              icon: null,
+                              gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                              accent: '#764ba2'
+                            };
+                        }
+                      };
 
-            {/* Insight Cards Section */}
-            <section className={styles.insightSection}>
-              <div className={styles.insightGrid}>
-                {insightCards.map((insight) => (
-                  <article key={insight.id} className={styles.insightCard}>
-                    <h3 className={styles.insightCardTitle}>{insight.title}</h3>
-                    {insight.type === 'donut' ? (
-                      <div className={styles.donutChart}>
-                        <svg width="120" height="120" viewBox="0 0 120 120">
-                          <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" strokeWidth="20" />
-                          <circle
-                            cx="60"
-                            cy="60"
-                            r="50"
-                            fill="none"
-                            stroke="#3b82f6"
-                            strokeWidth="20"
-                            strokeDasharray={`${2 * Math.PI * 50 * (insight.data.percentage / 100)} ${2 * Math.PI * 50}`}
-                            strokeDashoffset={`${2 * Math.PI * 50 * 0.25}`}
-                            transform="rotate(-90 60 60)"
-                          />
-                        </svg>
-                        <div className={styles.donutLegend}>
-                          <div className={styles.donutLegendItem}>
-                            <span className={styles.donutDot} style={{ backgroundColor: '#3b82f6' }}></span>
-                            <span>{insight.data.main}</span>
+                      const config = getKpiConfig();
+
+                      return (
+                        <article key={kpi.id} className={styles.kpiCard}>
+                          <div className={styles.kpiCardContent}>
+                            <div className={styles.kpiIconWrapper} style={{ background: config.gradient }}>
+                              {config.icon}
+                            </div>
+                            <div className={styles.kpiCardInfo}>
+                              <h3 className={styles.kpiCardTitle}>{kpi.title}</h3>
+                              <div className={styles.kpiCardValue}>{kpi.value}</div>
+                              <div className={`${styles.kpiCardChange} ${kpi.isPositive ? styles.kpiChangePositive : styles.kpiChangeNegative}`}>
+                                <span className={styles.kpiChangeIcon}>{kpi.isPositive ? '▲' : '▼'}</span>
+                                <span>{kpi.change}</span>
+                              </div>
+                            </div>
                           </div>
-                          <div className={styles.donutLegendItem}>
-                            <span className={styles.donutDot} style={{ backgroundColor: '#e5e7eb' }}></span>
-                            <span>Others</span>
+                          <p className={styles.kpiCardDescription}>{kpi.description}</p>
+                          <div className={styles.kpiProgressBar}>
+                            <div className={styles.kpiProgressTrack}>
+                              <div 
+                                className={styles.kpiProgressFill}
+                                style={{ width: `${kpi.progress}%`, background: config.gradient }}
+                              ></div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className={styles.insightCardValue}>{insight.value}</div>
-                        {insight.label && <div className={styles.insightCardLabel}>{insight.label}</div>}
-                        {insight.breakdown && <div className={styles.insightCardBreakdown}>{insight.breakdown}</div>}
-                        {insight.percentage && <div className={styles.insightCardPercentage}>{insight.percentage}</div>}
-                      </>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </section>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* Graph Cards Section */}
+                <section className={styles.graphSection}>
+                  <div className={styles.graphGrid}>
+                    {graphCards && graphCards.length > 0 && graphCards.map((graph) => {
+                      return (
+                        <article key={graph.id} className={styles.graphCard}>
+                          <div className={styles.graphCardHeader}>
+                            <div>
+                              <h3 className={styles.graphCardTitle}>{graph.title}</h3>
+                              <div className={styles.graphCardValue}>{graph.value}</div>
+                              <div className={styles.graphCardChange}>
+                                <span className={styles.kpiChangeIcon}>{graph.isPositive ? '▲' : '▼'}</span>
+                                <span>{graph.change}</span>
+                              </div>
+                            </div>
+                            <div className={styles.graphCardIcon}>
+                              {graph.type === 'line' ? (
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.9">
+                                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                                  <polyline points="17 6 23 6 23 12"></polyline>
+                                </svg>
+                              ) : (
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.9">
+                                  <line x1="18" y1="20" x2="18" y2="10"></line>
+                                  <line x1="12" y1="20" x2="12" y2="4"></line>
+                                  <line x1="6" y1="20" x2="6" y2="14"></line>
+                                </svg>
+                              )}
+                            </div>
+                          </div>
+                          <div className={styles.graphPlaceholder}>
+                            {graph.type === 'line' && graph.data ? (
+                              <svg width="100%" height="160" viewBox="0 0 400 160" preserveAspectRatio="none">
+                                {(() => {
+                                  const maxValue = Math.max(...graph.data.map(d => d.count), 1);
+                                  const points = graph.data.map((d, i) => {
+                                    const x = (i / (graph.data.length - 1 || 1)) * 400;
+                                    const y = 160 - (d.count / maxValue) * 140;
+                                    return `${x},${y}`;
+                                  }).join(' ');
+                                  
+                                  return (
+                                    <>
+                                      <polyline
+                                        points={points}
+                                        fill="none"
+                                        stroke="#3b82f6"
+                                        strokeWidth="2.5"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                      <polyline
+                                        points={`0,160 ${points} 400,160`}
+                                        fill={`url(#lineGradient-${graph.id})`}
+                                        opacity="0.2"
+                                      />
+                                      <defs>
+                                        <linearGradient id={`lineGradient-${graph.id}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                                          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
+                                          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+                                        </linearGradient>
+                                      </defs>
+                                    </>
+                                  );
+                                })()}
+                              </svg>
+                            ) : graph.type === 'bar' && graph.data ? (
+                              <svg width="100%" height="160" viewBox="0 0 400 160" preserveAspectRatio="none">
+                                {(() => {
+                                  const maxValue = Math.max(...graph.data.map(d => d.count), 1);
+                                  const barWidth = 380 / Math.min(graph.data.length, 30);
+                                  return graph.data.slice(0, 30).map((d, i) => {
+                                    const x = 10 + i * barWidth;
+                                    const height = (d.count / maxValue) * 140;
+                                    const y = 160 - height;
+                                    return (
+                                      <rect
+                                        key={i}
+                                        x={x}
+                                        y={y}
+                                        width={barWidth - 2}
+                                        height={height}
+                                        fill={d.count > 0 ? "#3b82f6" : "#e5e7eb"}
+                                        rx="2"
+                                      />
+                                    );
+                                  });
+                                })()}
+                              </svg>
+                            ) : (
+                              <svg width="100%" height="160" viewBox="0 0 400 160" preserveAspectRatio="none">
+                                <rect x="20" y="100" width="60" height="60" fill="#e5e7eb" rx="3" />
+                                <rect x="100" y="80" width="60" height="80" fill="#e5e7eb" rx="3" />
+                                <rect x="180" y="40" width="60" height="120" fill="#3b82f6" rx="3" />
+                                <rect x="260" y="70" width="60" height="90" fill="#e5e7eb" rx="3" />
+                                <rect x="340" y="90" width="60" height="70" fill="#e5e7eb" rx="3" />
+                              </svg>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* Insight Cards Section */}
+                <section className={styles.insightSection}>
+                  <div className={styles.insightGrid}>
+                    {insightCards && insightCards.length > 0 && insightCards.map((insight) => {
+                      return (
+                        <article key={insight.id} className={styles.insightCard}>
+                          <h3 className={styles.insightCardTitle}>{insight.title}</h3>
+                          {insight.type === 'donut' ? (
+                            <div className={styles.donutChart}>
+                              <svg width="100" height="100" viewBox="0 0 120 120">
+                                <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" strokeWidth="20" />
+                                <circle
+                                  cx="60"
+                                  cy="60"
+                                  r="50"
+                                  fill="none"
+                                  stroke="#3b82f6"
+                                  strokeWidth="20"
+                                  strokeDasharray={`${2 * Math.PI * 50 * (insight.data.percentage / 100)} ${2 * Math.PI * 50}`}
+                                  strokeDashoffset={`${2 * Math.PI * 50 * 0.25}`}
+                                  transform="rotate(-90 60 60)"
+                                  strokeLinecap="round"
+                                />
+                                <text x="60" y="65" textAnchor="middle" fill="#111827" fontSize="20" fontWeight="700">
+                                  {insight.data.percentage}%
+                                </text>
+                              </svg>
+                              <div className={styles.donutLegend}>
+                                <div className={styles.donutLegendItem}>
+                                  <span className={styles.donutDot} style={{ backgroundColor: '#3b82f6' }}></span>
+                                  <span>{insight.data.main}</span>
+                                </div>
+                                <div className={styles.donutLegendItem}>
+                                  <span className={styles.donutDot} style={{ backgroundColor: '#e5e7eb' }}></span>
+                                  <span>Others</span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className={styles.insightCardValue}>{insight.value}</div>
+                              {insight.label && <div className={styles.insightCardLabel}>{insight.label}</div>}
+                              {insight.breakdown && <div className={styles.insightCardBreakdown}>{insight.breakdown}</div>}
+                              {insight.percentage && <div className={styles.insightCardPercentage}>{insight.percentage}</div>}
+                            </>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              </>
+            )}
           </main>
-        </Layout>
 
           {/* Date Range Picker Modal */}
           {dateRangePickerOpen && (
@@ -696,7 +979,7 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-      </div>
+        </Layout>
     </>
   );
 }

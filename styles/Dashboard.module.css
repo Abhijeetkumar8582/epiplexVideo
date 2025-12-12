@@ -1,8 +1,7 @@
 .dashboard {
-  display: flex;
   min-height: 100vh;
-  background-color: #ffffff;
-  color: #000000;
+  background: #f5f7fa;
+  width: 100%;
 }
 
 /* Screen Reader Only - for accessibility and SEO */
@@ -138,6 +137,17 @@
 }
 
 .sidebarCollapsed .logoSquare {
+  display: none;
+}
+
+.logoImage {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.sidebarCollapsed .logoImage {
   display: none;
 }
 
@@ -1175,8 +1185,100 @@
 /* Dashboard Main */
 .dashboardMain {
   padding: 0;
-  background-color: #f9fafb;
+  background: #f5f7fa;
   min-height: calc(100vh - 80px);
+  width: 100%;
+}
+
+/* Loading State */
+.loadingContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  min-height: 400px;
+}
+
+.loadingSpinner {
+  margin-bottom: 24px;
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e5e7eb;
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loadingText {
+  font-size: 16px;
+  color: #6b7280;
+  font-weight: 500;
+  margin: 0;
+}
+
+/* Error State */
+.errorContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  min-height: 400px;
+  text-align: center;
+}
+
+.errorIcon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #fee2e2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ef4444;
+  margin-bottom: 24px;
+}
+
+.errorTitle {
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 12px 0;
+}
+
+.errorMessage {
+  font-size: 16px;
+  color: #6b7280;
+  margin: 0 0 32px 0;
+  max-width: 500px;
+}
+
+.retryButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.retryButton:hover {
+  background: #5568d3;
+  transform: translateY(-1px);
 }
 
 /* Dashboard Header */
@@ -1185,19 +1287,19 @@
   justify-content: space-between;
   align-items: center;
   padding: 20px 32px;
-  background-color: transparent;
+  background: #ffffff;
   border-bottom: 1px solid #e5e7eb;
   position: sticky;
   top: 0;
   z-index: 10;
+  width: 100%;
 }
 
 .dashboardPageTitle {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
   color: #111827;
   margin: 0;
-  letter-spacing: -0.3px;
 }
 
 .headerActions {
@@ -1210,8 +1312,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  background-color: #ffffff;
+  padding: 10px 16px;
+  background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   font-size: 14px;
@@ -1223,17 +1325,13 @@
 }
 
 .headerActionButton:hover {
-  background-color: #f9fafb;
+  background: #f9fafb;
   border-color: #d1d5db;
 }
 
 .headerActionButton svg {
   flex-shrink: 0;
   color: #6b7280;
-}
-
-.headerActionButton span {
-  color: #374151;
 }
 
 /* KPI Cards Section */
@@ -1252,15 +1350,40 @@
   background: #ffffff;
   border-radius: 12px;
   padding: 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
   transition: all 0.2s ease;
-  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .kpiCard:hover {
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   transform: translateY(-2px);
+}
+
+.kpiCardContent {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.kpiIconWrapper {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.kpiCardInfo {
+  flex: 1;
+  min-width: 0;
 }
 
 .kpiCardArrow {
@@ -1285,10 +1408,11 @@
 }
 
 .kpiCardTitle {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   color: #6b7280;
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
 }
 
 .kpiCardValue {
@@ -1296,17 +1420,20 @@
   font-weight: 700;
   color: #111827;
   margin: 0 0 8px 0;
-  line-height: 1;
-  letter-spacing: -0.8px;
+  line-height: 1.2;
 }
 
 .kpiCardChange {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  margin: 0 0 8px 0;
+  margin: 0 0 12px 0;
+}
+
+.kpiChangeIcon {
+  font-size: 10px;
 }
 
 .kpiChangePositive {
@@ -1322,18 +1449,26 @@
   color: #6b7280;
   margin: 0 0 16px 0;
   line-height: 1.5;
+  flex: 1;
 }
 
 .kpiProgressBar {
   width: 100%;
+  margin-top: auto;
 }
 
 .kpiProgressTrack {
   width: 100%;
   height: 4px;
-  background-color: #e5e7eb;
-  border-radius: 2px;
-  position: relative;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.kpiProgressFill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
 }
 
 .kpiProgressDot {
@@ -1351,33 +1486,57 @@
 /* Graph Cards Section */
 .graphSection {
   width: 100%;
-  padding: 0 32px 24px;
+  padding: 0 32px 20px;
 }
 
 .graphGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
   gap: 20px;
 }
 
 .graphCard {
   background: #ffffff;
   border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
   transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .graphCard:hover {
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.graphCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.graphCardIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  flex-shrink: 0;
 }
 
 .graphCardTitle {
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 600;
-  color: #111827;
-  margin: 0 0 16px 0;
+  color: #6b7280;
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
 }
 
 .graphCardValue {
@@ -1385,29 +1544,34 @@
   font-weight: 700;
   color: #111827;
   margin: 0 0 8px 0;
-  line-height: 1;
-  letter-spacing: -0.5px;
+  line-height: 1.2;
 }
 
 .graphCardChange {
-  font-size: 13px;
-  font-weight: 500;
-  margin: 0 0 20px 0;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #6b7280;
 }
 
 .graphPlaceholder {
   width: 100%;
-  height: 200px;
-  margin-top: 16px;
-  background-color: #f9fafb;
+  height: 160px;
+  margin-top: 8px;
+  background: #f9fafb;
   border-radius: 8px;
   overflow: hidden;
+  border: 1px solid #e5e7eb;
+  flex: 1;
 }
 
 /* Insight Cards Section */
 .insightSection {
   width: 100%;
-  padding: 0 32px 32px;
+  padding: 0 32px 24px;
 }
 
 .insightGrid {
@@ -1420,36 +1584,38 @@
   background: #ffffff;
   border-radius: 12px;
   padding: 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
   transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
+  height: 100%;
 }
 
 .insightCard:hover {
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
 }
 
 .insightCardTitle {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
   color: #6b7280;
   margin: 0 0 16px 0;
+  text-transform: uppercase;
 }
 
 .insightCardValue {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: #111827;
   margin: 0 0 8px 0;
-  letter-spacing: -0.3px;
 }
 
 .insightCardLabel {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: #374151;
   margin: 0 0 4px 0;
@@ -1474,6 +1640,11 @@
   gap: 16px;
 }
 
+.donutChart svg {
+  width: 100px;
+  height: 100px;
+}
+
 .donutLegend {
   display: flex;
   flex-direction: column;
@@ -1487,11 +1658,12 @@
   gap: 8px;
   font-size: 13px;
   color: #374151;
+  font-weight: 500;
 }
 
 .donutDot {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -2385,6 +2557,7 @@
 .processDataTable {
   width: 100%;
   border-collapse: collapse;
+  background-color: #ffffff;
 }
 
 .processDataTable thead {
@@ -2411,6 +2584,10 @@
   background-color: #f9fafb;
 }
 
+.processDataTable tbody tr:last-child {
+  border-bottom: none;
+}
+
 .processDataTable td {
   padding: 16px;
   font-size: 14px;
@@ -2423,6 +2600,102 @@
   height: 18px;
   cursor: pointer;
   accent-color: #7c3aed;
+}
+
+/* Pagination Styles */
+.paginationContainer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  background-color: #ffffff;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 0;
+}
+
+.paginationInfo {
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.paginationControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.paginationButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.paginationButton:hover:not(:disabled) {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+  color: #111827;
+}
+
+.paginationButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.paginationButton svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.paginationNumbers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.paginationNumber {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 12px;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.paginationNumber:hover {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+  color: #111827;
+}
+
+.paginationNumberActive {
+  background-color: #667eea;
+  border-color: #667eea;
+  color: #ffffff;
+}
+
+.paginationNumberActive:hover {
+  background-color: #5568d3;
+  border-color: #5568d3;
+  color: #ffffff;
 }
 
 .documentNameCell {
@@ -2533,6 +2806,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-content: flex-end;
+  min-width: 120px;
 }
 
 .viewButton {
@@ -2585,6 +2860,68 @@
 
 .moreButton:hover {
   background-color: #f3f4f6;
+  color: #374151;
+}
+
+.moreButtonContainer {
+  position: relative;
+}
+
+.dropdownMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 160px;
+  z-index: 1000;
+  animation: slideDown 0.2s ease;
+  overflow: hidden;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dropdownItem:hover {
+  background-color: #f9fafb;
+  color: #111827;
+}
+
+.dropdownItem svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: #6b7280;
+}
+
+.dropdownItem:hover svg {
   color: #374151;
 }
 
@@ -2907,6 +3244,31 @@
 
 .input::placeholder {
   color: #9ca3af;
+}
+
+.inputError {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1) !important;
+}
+
+.inputError:focus {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+}
+
+.errorMessage {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 6px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.errorMessage::before {
+  content: '⚠';
+  font-size: 14px;
 }
 
 /* Upload Area */
@@ -3962,6 +4324,86 @@
 }
 
 /* Audio Section */
+/* Audio Step Status Styles */
+.audioStepStatus {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%);
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(10px);
+  margin-bottom: 24px;
+}
+
+.stepStatusHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.stepStatusIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.stepStatusIcon svg {
+  width: 24px;
+  height: 24px;
+  stroke: white;
+  stroke-width: 3;
+}
+
+.stepStatusSpinner {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
+  }
+}
+
+.stepStatusInfo {
+  flex: 1;
+}
+
+.stepStatusTitle {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 8px 0;
+}
+
+.stepStatusDescription {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.checkIcon {
+  width: 24px;
+  height: 24px;
+  stroke: white;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
 .audioContainer {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%);
   border-radius: 16px;
@@ -4547,6 +4989,326 @@
 
   .infoValue {
     font-size: 14px;
+  }
+}
+
+/* Input Error Styles */
+.inputError {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1) !important;
+}
+
+.inputError:focus {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+}
+
+.errorMessage {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 6px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.errorMessage::before {
+  content: '⚠';
+  font-size: 14px;
+}
+
+/* Data Transfer Dialog Styles */
+.transferDialogOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+  animation: fadeIn 0.3s ease;
+  backdrop-filter: blur(8px);
+}
+
+.transferDialog {
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+  border-radius: 24px;
+  padding: 48px 64px;
+  max-width: 800px;
+  width: 90%;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+.transferHeader {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.transferTitle {
+  font-size: 28px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.transferContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 40px;
+  position: relative;
+}
+
+.transferSide {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.transferIconContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.videoIcon {
+  width: 120px;
+  height: 120px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+  animation: pulseIcon 2s ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+}
+
+.videoIcon::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  animation: shimmer 2s infinite;
+}
+
+.databaseIcon {
+  width: 120px;
+  height: 120px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+  animation: pulseIcon 2s ease-in-out infinite;
+  animation-delay: 0.5s;
+  position: relative;
+  overflow: hidden;
+}
+
+.databaseIcon::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  animation: shimmer 2s infinite;
+  animation-delay: 0.5s;
+}
+
+@keyframes pulseIcon {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 15px 35px rgba(59, 130, 246, 0.4);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%) translateY(-100%) rotate(45deg);
+  }
+  100% {
+    transform: translateX(100%) translateY(100%) rotate(45deg);
+  }
+}
+
+.transferLabel {
+  font-size: 18px;
+  font-weight: 600;
+  color: #374151;
+  text-align: center;
+}
+
+.transferFileName {
+  font-size: 14px;
+  color: #6b7280;
+  text-align: center;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transferStatus {
+  font-size: 14px;
+  color: #10b981;
+  font-weight: 600;
+  text-align: center;
+}
+
+.transferArrowContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 auto;
+  min-width: 120px;
+}
+
+.transferArrow {
+  color: #667eea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arrowPath {
+  animation: arrowMove 1.5s ease-in-out infinite;
+}
+
+.arrowDot {
+  fill: #667eea;
+  animation: dotPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes arrowMove {
+  0%, 100% {
+    opacity: 0.6;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(5px);
+  }
+}
+
+@keyframes dotPulse {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.transferProgress {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.transferProgressBar {
+  width: 100%;
+  height: 8px;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.transferProgressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.transferProgressFill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: progressShine 1.5s infinite;
+}
+
+@keyframes progressShine {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.transferProgressText {
+  font-size: 14px;
+  font-weight: 600;
+  color: #667eea;
+  text-align: center;
+}
+
+/* Responsive Transfer Dialog */
+@media (max-width: 768px) {
+  .transferDialog {
+    padding: 32px 24px;
+    max-width: 95%;
+  }
+
+  .transferContent {
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .transferArrowContainer {
+    transform: rotate(90deg);
+    min-width: auto;
+    min-height: 80px;
+  }
+
+  .videoIcon,
+  .databaseIcon {
+    width: 80px;
+    height: 80px;
+  }
+
+  .transferTitle {
+    font-size: 22px;
   }
 }
 

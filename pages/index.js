@@ -6,8 +6,11 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    router.push('/dashboard');
-  }, [router]);
+    if (router.isReady) {
+      router.push('/dashboard');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady]);
 
   const structuredData = {
     '@context': 'https://schema.org',

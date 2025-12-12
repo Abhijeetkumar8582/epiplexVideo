@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
+import Image from 'next/image';
 import styles from '../styles/Dashboard.module.css';
 import { logout } from '../lib/api';
 
@@ -117,7 +118,14 @@ export default function Layout({ children, pageTitle = 'Dashboard' }) {
             </svg>
           </button>
           <div className={styles.logoIcon}>
-            <div className={styles.logoSquare}>E</div>
+            <Image
+              src="https://epiplex.ai/wp-content/uploads/2024/08/cropped-piplex-ai-logo.png"
+              alt="Epiplex Logo"
+              width={40}
+              height={40}
+              className={styles.logoImage}
+              priority
+            />
           </div>
           <h2 className={styles.appName}>Epiplex</h2>
         </div>

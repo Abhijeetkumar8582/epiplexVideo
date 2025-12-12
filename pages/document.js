@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logDocumentView } from '../lib/activityLogger';
 import { getVideosPanel, getDocument } from '../lib/api';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function Document() {
   const router = useRouter();
@@ -14,14 +17,31 @@ export default function Document() {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [documentData, setDocumentData] = useState(null);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const pageSize = 10;
+  const [isInitialMount, setIsInitialMount] = useState(true);
 
   useEffect(() => {
     // Log page view
     logPageView('Documents');
     
-    // Fetch videos
-    fetchVideos();
+    // Fetch videos on initial load
+    fetchVideos(1);
+    setIsInitialMount(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Refetch when page changes (skip initial mount)
+  useEffect(() => {
+    if (!isInitialMount) {
+      fetchVideos(currentPage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
 
   // Handle query parameter to open specific document
   useEffect(() => {
@@ -31,17 +51,23 @@ export default function Document() {
         handleRowClick(video);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.video, videos]);
 
-  const fetchVideos = async () => {
+  const fetchVideos = async (page = currentPage) => {
     try {
       setLoading(true);
-      const response = await getVideosPanel({ page: 1, page_size: 100 });
+      const response = await getVideosPanel({ 
+        page: page, 
+        page_size: pageSize,
+        sort_by: 'updated_at',
+        sort_order: 'desc'
+      });
       if (response && response.videos && Array.isArray(response.videos)) {
         // Map API response to document format
         const mappedVideos = response.videos.map((video, index) => ({
           id: video.id,
-          documentId: video.video_file_number || `DOC-${String(index + 1).padStart(3, '0')}`,
+          documentId: video.video_file_number || `DOC-${String((page - 1) * pageSize + index + 1).padStart(3, '0')}`,
           name: video.name || 'Untitled Video',
           type: 'Video',
           access: 'Public',
@@ -64,14 +90,24 @@ export default function Document() {
           video_id: video.id
         }));
         setVideos(mappedVideos);
+        
+        // Update pagination info
+        if (response.total !== undefined) {
+          setTotalRecords(response.total);
+          setTotalPages(Math.ceil(response.total / pageSize));
+        }
       } else {
         // Set empty array if no videos
         setVideos([]);
+        setTotalRecords(0);
+        setTotalPages(1);
       }
     } catch (error) {
       console.error('Failed to fetch videos:', error);
       // Set empty array on error
       setVideos([]);
+      setTotalRecords(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
@@ -84,48 +120,50 @@ export default function Document() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const fetchDocumentData = async (videoFileNumber) => {
+  const fetchDocumentData = useCallback(async (videoFileNumber) => {
     try {
       const data = await getDocument(videoFileNumber);
       setDocumentData(data || null);
       
       // Update selected document with real data
-      if (selectedDocument && data) {
-        const updatedDocument = {
-          ...selectedDocument,
-          transcript: data.transcript || null,
-          transcribe: (data.frames && Array.isArray(data.frames)) 
-            ? data.frames.map((frame, index) => ({
-                id: frame.frame_id || index + 1,
-                text: frame.description || frame.ocr_text || '',
-                timestamp: formatTimestamp(frame.timestamp)
-              }))
-            : [],
-          voiceExtraction: (data.frames && Array.isArray(data.frames))
-            ? data.frames.map(f => f.description || f.ocr_text || '').filter(Boolean).join(' ') 
-            : 'No voice extraction available',
-          summary: data.summary || 'No summary available',
-          steps: (data.frames && Array.isArray(data.frames))
-            ? data.frames.map((frame, index) => ({
-                id: frame.frame_id || index + 1,
-                timestamp: formatTimestamp(frame.timestamp),
-                description: frame.description || frame.ocr_text || 'Frame analysis',
-                metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
-              }))
-            : []
-        };
-        setSelectedDocument(updatedDocument);
-      }
+      setSelectedDocument(prev => {
+        if (prev && data) {
+          return {
+            ...prev,
+            transcript: data.transcript || null,
+            transcribe: (data.frames && Array.isArray(data.frames)) 
+              ? data.frames.map((frame, index) => ({
+                  id: frame.frame_id || index + 1,
+                  text: frame.description || frame.ocr_text || '',
+                  timestamp: formatTimestamp(frame.timestamp)
+                }))
+              : [],
+            voiceExtraction: (data.frames && Array.isArray(data.frames))
+              ? data.frames.map(f => f.description || f.ocr_text || '').filter(Boolean).join(' ') 
+              : 'No voice extraction available',
+            summary: data.summary || 'No summary available',
+            steps: (data.frames && Array.isArray(data.frames))
+              ? data.frames.map((frame, index) => ({
+                  id: frame.frame_id || index + 1,
+                  timestamp: formatTimestamp(frame.timestamp),
+                  description: frame.description || frame.ocr_text || 'Frame analysis',
+                  metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
+                }))
+              : []
+          };
+        }
+        return prev;
+      });
     } catch (error) {
       console.error('Failed to fetch document:', error);
       // Set empty data on error
       setDocumentData(null);
     }
-  };
+  }, []);
 
   // Removed dummy data - using real data from API
 
-  const handleRowClick = async (document) => {
+  const handleRowClick = useCallback(async (document) => {
     if (!document) return;
     
     setSelectedDocument(document);
@@ -146,7 +184,7 @@ export default function Document() {
       // If no video_file_number, set empty data
       setDocumentData(null);
     }
-  };
+  }, [fetchDocumentData]);
 
   const handleCloseDetail = () => {
     setDetailViewOpen(false);
@@ -159,7 +197,7 @@ export default function Document() {
       // TODO: Call delete API endpoint
       // await deleteUpload(id);
       // Refresh the list
-      await fetchVideos();
+      await fetchVideos(currentPage);
     } catch (error) {
       console.error('Failed to delete:', error);
       alert('Failed to delete document. Please try again.');
@@ -273,9 +311,11 @@ export default function Document() {
                       </td>
                       <td>
                         <div className={styles.documentUsernameCell}>
-                          <img 
+                          <Image 
                             src={item.avatar} 
                             alt={item.createdBy}
+                            width={32}
+                            height={32}
                             className={styles.documentUserAvatar}
                           />
                           <span className={styles.documentUsername}>{item.createdBy}</span>
@@ -314,6 +354,63 @@ export default function Document() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {!loading && totalRecords > 0 && (
+            <div className={styles.paginationContainer}>
+              <div className={styles.paginationInfo}>
+                Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalRecords)} of {totalRecords} records
+              </div>
+              {totalPages > 1 && (
+                <div className={styles.paginationControls}>
+                  <button
+                    className={styles.paginationButton}
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                    Previous
+                  </button>
+                  <div className={styles.paginationNumbers}>
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          className={`${styles.paginationNumber} ${currentPage === pageNum ? styles.paginationNumberActive : ''}`}
+                          onClick={() => setCurrentPage(pageNum)}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    className={styles.paginationButton}
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </Layout>
 
         {/* Document Detail View */}
@@ -475,22 +572,48 @@ export default function Document() {
                   >
                     <div className={styles.audioContainer}>
                       {(() => {
-                        // Get audio URL from documentData or construct from video_file_number
-                        const audioUrl = documentData?.video_metadata?.audio_url || 
-                                        selectedDocument?.audioUrl ||
-                                        (documentData?.video_metadata?.video_file_number 
-                                          ? `/api/videos/file-number/${documentData.video_metadata.video_file_number}/audio`
-                                          : selectedDocument?.video_file_number
-                                          ? `/api/videos/file-number/${selectedDocument.video_file_number}/audio`
-                                          : null);
+                        // Get step progress from documentData or job status
+                        const stepProgress = documentData?.job_status?.step_progress || {};
+                        const extractAudioStatus = stepProgress.extract_audio || 'pending';
                         
+                        // Get video file number for constructing audio URL
+                        const videoFileNumber = documentData?.video_metadata?.video_file_number || 
+                                                selectedDocument?.video_file_number;
+                        
+                        // Get audio URL - prioritize direct audio_url, then construct from video_file_number
+                        let audioUrl = documentData?.video_metadata?.audio_url || 
+                                      selectedDocument?.audioUrl;
+                        
+                        // If no direct audio_url, construct from video_file_number
+                        if (!audioUrl && videoFileNumber) {
+                          audioUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/file-number/${videoFileNumber}/audio`;
+                        }
+                        
+                        // If audio URL exists (either from DB or constructed), show audio player
+                        // This ensures audio is shown even if step_progress isn't updated yet
                         if (audioUrl) {
                           return (
                             <>
+                              <div className={styles.audioStepStatus}>
+                                <div className={styles.stepStatusHeader}>
+                                  <div className={styles.stepStatusIcon}>
+                                    <svg className={styles.checkIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                      <polyline points="20 6 9 17 4 12" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                                    </svg>
+                                  </div>
+                                  <div className={styles.stepStatusInfo}>
+                                    <h3 className={styles.stepStatusTitle}>Audio Extraction Complete</h3>
+                                    <p className={styles.stepStatusDescription}>
+                                      Audio has been successfully extracted from the video.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
                               <audio
                                 controls
                                 className={styles.audioPlayer}
                                 aria-label={`Audio player for ${selectedDocument?.name || 'document'}`}
+                                preload="metadata"
                               >
                                 <source src={audioUrl} type="audio/mpeg" />
                                 <source src={audioUrl} type="audio/mp3" />
@@ -502,7 +625,7 @@ export default function Document() {
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className={styles.audioLink}
-                                  download
+                                  download={`audio_${videoFileNumber || 'video'}.mp3`}
                                   aria-label={`Download audio file for ${selectedDocument?.name || 'document'}`}
                                 >
                                   Download Audio
@@ -510,10 +633,41 @@ export default function Document() {
                               </div>
                             </>
                           );
+                        }
+                        
+                        // Show step status based on extraction progress
+                        if (extractAudioStatus === 'processing') {
+                          return (
+                            <div className={styles.audioStepStatus}>
+                              <div className={styles.stepStatusHeader}>
+                                <div className={styles.stepStatusIcon}>
+                                  <span className={styles.stepStatusSpinner}>🎵</span>
+                                </div>
+                                <div className={styles.stepStatusInfo}>
+                                  <h3 className={styles.stepStatusTitle}>Extracting Audio</h3>
+                                  <p className={styles.stepStatusDescription}>
+                                    Audio extraction is in progress. Please wait...
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          );
                         } else {
                           return (
                             <div className={styles.emptyState}>
-                              Audio extraction not available. The video may still be processing.
+                              <div className={styles.audioStepStatus}>
+                                <div className={styles.stepStatusHeader}>
+                                  <div className={styles.stepStatusIcon}>
+                                    <span>⏳</span>
+                                  </div>
+                                  <div className={styles.stepStatusInfo}>
+                                    <h3 className={styles.stepStatusTitle}>Audio Extraction Pending</h3>
+                                    <p className={styles.stepStatusDescription}>
+                                      Audio extraction has not started yet. The video may still be processing.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           );
                         }

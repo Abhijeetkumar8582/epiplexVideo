@@ -11,15 +11,19 @@ export default function App({ Component, pageProps }) {
   useEffect(() => {
     // Log initial page view
     const logCurrentPage = () => {
-      const pageName = router.pathname === '/' ? 'Home' : router.pathname.replace('/', '').replace('-', ' ') || 'Unknown'
-      logPageView(pageName, {
-        path: router.asPath,
-        query: router.query
-      })
+      if (router.isReady) {
+        const pageName = router.pathname === '/' ? 'Home' : router.pathname.replace('/', '').replace('-', ' ') || 'Unknown'
+        logPageView(pageName, {
+          path: router.asPath,
+          query: router.query
+        })
+      }
     }
 
-    // Log on mount
-    logCurrentPage()
+    // Log on mount (only when router is ready)
+    if (router.isReady) {
+      logCurrentPage()
+    }
 
     // Log on route change
     const handleRouteChange = (url) => {
@@ -31,12 +35,18 @@ export default function App({ Component, pageProps }) {
       })
     }
 
-    router.events.on('routeChangeComplete', handleRouteChange)
+    // Only attach event listeners when router is ready
+    if (router.isReady && router.events) {
+      router.events.on('routeChangeComplete', handleRouteChange)
+    }
 
     return () => {
-      router.events.off('routeChangeComplete', handleRouteChange)
+      if (router.events) {
+        router.events.off('routeChangeComplete', handleRouteChange)
+      }
     }
-  }, [router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady, router.pathname, router.asPath])
 
   return (
     <>
