@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logDocumentView } from '../lib/activityLogger';
-import { getVideosPanel, getDocument } from '../lib/api';
+import { getVideosPanel, getDocument, bulkDeleteUploads, getVideoSummaries } from '../lib/api';
+import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -17,6 +18,12 @@ export default function Document() {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [documentData, setDocumentData] = useState(null);
+  const [summaries, setSummaries] = useState([]);
+  const [summariesLoading, setSummariesLoading] = useState(false);
+  
+  // Selection state
+  const [selectedItems, setSelectedItems] = useState(new Set());
+  const [selectAll, setSelectAll] = useState(false);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -39,9 +46,24 @@ export default function Document() {
   useEffect(() => {
     if (!isInitialMount) {
       fetchVideos(currentPage);
+      // Clear selection when page changes
+      setSelectedItems(new Set());
+      setSelectAll(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);
+
+  // Update select all state when videos or selection changes
+  useEffect(() => {
+    if (videos.length > 0) {
+      const allCurrentPageIds = videos.map(v => v.id);
+      const allSelected = allCurrentPageIds.length > 0 && 
+                         allCurrentPageIds.every(id => selectedItems.has(id));
+      setSelectAll(allSelected);
+    } else {
+      setSelectAll(false);
+    }
+  }, [selectedItems, videos]);
 
   // Handle query parameter to open specific document
   useEffect(() => {
@@ -54,7 +76,21 @@ export default function Document() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.video, videos]);
 
+  const getCacheKey = (page) => `document:videos:page:${page}`;
+
   const fetchVideos = async (page = currentPage) => {
+    const cacheKey = getCacheKey(page);
+    
+    // Check cache first
+    const cachedData = dataCache.get(cacheKey);
+    if (cachedData) {
+      setVideos(cachedData.videos);
+      setTotalRecords(cachedData.totalRecords);
+      setTotalPages(cachedData.totalPages);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const response = await getVideosPanel({ 
@@ -92,10 +128,18 @@ export default function Document() {
         setVideos(mappedVideos);
         
         // Update pagination info
-        if (response.total !== undefined) {
-          setTotalRecords(response.total);
-          setTotalPages(Math.ceil(response.total / pageSize));
-        }
+        const totalRecords = response.total !== undefined ? response.total : 0;
+        const totalPages = Math.ceil(totalRecords / pageSize);
+        
+        setTotalRecords(totalRecords);
+        setTotalPages(totalPages);
+
+        // Cache the data
+        dataCache.set(cacheKey, {
+          videos: mappedVideos,
+          totalRecords,
+          totalPages
+        }, CACHE_DURATION.VIDEO_LIST);
       } else {
         // Set empty array if no videos
         setVideos([]);
@@ -121,9 +165,52 @@ export default function Document() {
   };
 
   const fetchDocumentData = useCallback(async (videoFileNumber) => {
+    const cacheKey = `document:data:${videoFileNumber}`;
+    
+    // Check cache first
+    const cachedData = dataCache.get(cacheKey);
+    if (cachedData) {
+      setDocumentData(cachedData);
+      // Update selected document with cached data
+      setSelectedDocument(prev => {
+        if (prev && cachedData) {
+          return {
+            ...prev,
+            transcript: cachedData.transcript || null,
+            transcribe: (cachedData.frames && Array.isArray(cachedData.frames)) 
+              ? cachedData.frames.map((frame, index) => ({
+                  id: frame.frame_id || index + 1,
+                  text: frame.description || frame.ocr_text || '',
+                  timestamp: formatTimestamp(frame.timestamp)
+                }))
+              : [],
+            voiceExtraction: (cachedData.frames && Array.isArray(cachedData.frames))
+              ? cachedData.frames.map(f => f.description || f.ocr_text || '').filter(Boolean).join(' ') 
+              : 'No voice extraction available',
+            summary: cachedData.summary || 'No summary available',
+            steps: (cachedData.frames && Array.isArray(cachedData.frames))
+              ? cachedData.frames.map((frame, index) => ({
+                  id: frame.frame_id || index + 1,
+                  timestamp: formatTimestamp(frame.timestamp),
+                  description: frame.description || frame.ocr_text || 'Frame analysis',
+                  metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
+                }))
+              : []
+          };
+        }
+        return prev;
+      });
+      return;
+    }
+
     try {
       const data = await getDocument(videoFileNumber);
       setDocumentData(data || null);
+      
+      // Cache the data
+      if (data) {
+        dataCache.set(cacheKey, data, CACHE_DURATION.DOCUMENT_DATA);
+      }
       
       // Update selected document with real data
       setSelectedDocument(prev => {
@@ -143,12 +230,28 @@ export default function Document() {
               : 'No voice extraction available',
             summary: data.summary || 'No summary available',
             steps: (data.frames && Array.isArray(data.frames))
-              ? data.frames.map((frame, index) => ({
-                  id: frame.frame_id || index + 1,
-                  timestamp: formatTimestamp(frame.timestamp),
-                  description: frame.description || frame.ocr_text || 'Frame analysis',
-                  metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
-                }))
+              ? data.frames.map((frame, index) => {
+                  // Extract meta_tags from gpt_response if available
+                  let metaTags = ['frame', 'analysis'];
+                  if (frame.gpt_response) {
+                    if (Array.isArray(frame.gpt_response.meta_tags)) {
+                      metaTags = frame.gpt_response.meta_tags;
+                    } else if (frame.gpt_response.meta_tags) {
+                      metaTags = [frame.gpt_response.meta_tags];
+                    }
+                  }
+                  // Fallback to old logic if no meta_tags
+                  if (metaTags.length === 0 || (metaTags.length === 1 && metaTags[0] === 'frame')) {
+                    metaTags = frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis'];
+                  }
+                  
+                  return {
+                    id: frame.frame_id || index + 1,
+                    timestamp: formatTimestamp(frame.timestamp),
+                    description: frame.description || frame.ocr_text || 'Frame analysis',
+                    metaTags: metaTags
+                  };
+                })
               : []
           };
         }
@@ -158,6 +261,43 @@ export default function Document() {
       console.error('Failed to fetch document:', error);
       // Set empty data on error
       setDocumentData(null);
+    }
+  }, []);
+  
+  const fetchSummaries = useCallback(async (videoId) => {
+    if (!videoId) {
+      console.warn('fetchSummaries called without videoId');
+      return;
+    }
+    
+    try {
+      setSummariesLoading(true);
+      console.log('Calling getVideoSummaries with videoId:', videoId);
+      const data = await getVideoSummaries(videoId);
+      console.log('Summaries response:', data);
+      // Handle both response formats: {summaries: [...]} or direct array
+      let summariesList = [];
+      if (Array.isArray(data)) {
+        summariesList = data;
+      } else if (data && data.summaries && Array.isArray(data.summaries)) {
+        summariesList = data.summaries;
+      } else if (data && Array.isArray(data)) {
+        summariesList = data;
+      }
+      
+      if (summariesList.length > 0) {
+        setSummaries(summariesList);
+        console.log('Set summaries:', summariesList.length);
+      } else {
+        console.log('No summaries in response');
+        setSummaries([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch summaries:', error);
+      console.error('Error details:', error.response?.data || error.message);
+      setSummaries([]);
+    } finally {
+      setSummariesLoading(false);
     }
   }, []);
 
@@ -180,27 +320,138 @@ export default function Document() {
       
       // Fetch full document data if video_file_number is available
       await fetchDocumentData(document.video_file_number);
+      
+      // Fetch summaries if video_id is available
+      // Try both id and video_id fields
+      const videoId = document.id || document.video_id || document.video_id;
+      if (videoId) {
+        console.log('Fetching summaries for video_id:', videoId, 'from document:', document);
+        await fetchSummaries(videoId);
+      } else {
+        console.warn('No video ID found in document:', document);
+        setSummaries([]);
+      }
     } else {
       // If no video_file_number, set empty data
       setDocumentData(null);
+      setSummaries([]);
     }
-  }, [fetchDocumentData]);
+  }, [fetchDocumentData, fetchSummaries]);
+
+  // Refetch summaries when documentData is loaded (in case video_id wasn't available initially)
+  useEffect(() => {
+    if (documentData?.video_metadata?.video_id && summaries.length === 0 && !summariesLoading && selectedDocument) {
+      const videoId = documentData.video_metadata.video_id;
+      console.log('Refetching summaries after documentData loaded with video_id:', videoId);
+      fetchSummaries(videoId);
+    }
+  }, [documentData?.video_metadata?.video_id, summaries.length, summariesLoading, selectedDocument, fetchSummaries]);
+
+  // Refetch summaries when switching to summary tab if we have a video ID but no summaries
+  useEffect(() => {
+    if (activeTab === 'summary' && selectedDocument && summaries.length === 0 && !summariesLoading) {
+      const videoId = selectedDocument.id || selectedDocument.video_id || documentData?.video_metadata?.video_id;
+      if (videoId) {
+        console.log('Refetching summaries when switching to summary tab');
+        fetchSummaries(videoId);
+      }
+    }
+  }, [activeTab, selectedDocument, summaries.length, summariesLoading, documentData, fetchSummaries]);
 
   const handleCloseDetail = () => {
     setDetailViewOpen(false);
     setSelectedDocument(null);
   };
 
-  const handleDelete = async (e, id) => {
-    e.stopPropagation(); // Prevent row click
+  const handleSelectAll = (e) => {
+    e.stopPropagation();
+    const isChecked = e.target.checked;
+    
+    if (isChecked && videos.length > 0) {
+      // Select all items on current page
+      const allIds = new Set(videos.map(video => video.id));
+      setSelectedItems(prev => {
+        const newSet = new Set(prev);
+        allIds.forEach(id => newSet.add(id));
+        return newSet;
+      });
+    } else {
+      // Deselect all items on current page only
+      const currentPageIds = new Set(videos.map(video => video.id));
+      setSelectedItems(prev => {
+        const newSet = new Set(prev);
+        currentPageIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+    }
+  };
+
+  const handleSelectItem = (e, id) => {
+    e.stopPropagation();
+    const newSelected = new Set(selectedItems);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedItems(newSelected);
+    setSelectAll(newSelected.size === videos.length && videos.length > 0);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedItems.size === 0) {
+      alert('Please select at least one document to delete.');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to permanently delete ${selectedItems.size} document(s)? This action cannot be undone.`)) {
+      return;
+    }
+
     try {
-      // TODO: Call delete API endpoint
-      // await deleteUpload(id);
+      const uploadIds = Array.from(selectedItems);
+      const response = await bulkDeleteUploads(uploadIds, true); // permanent delete
+      
+      // Clear cache
+      dataCache.clearByPattern('document:videos:');
+      dataCache.clearByPattern('dashboard:');
+      
+      // Clear selection
+      setSelectedItems(new Set());
+      setSelectAll(false);
+      
       // Refresh the list
       await fetchVideos(currentPage);
+      
+      alert(response.message || `Successfully deleted ${response.deleted_count || selectedItems.size} document(s)`);
+    } catch (error) {
+      console.error('Failed to delete documents:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to delete documents. Please try again.';
+      alert(errorMessage);
+    }
+  };
+
+  const handleDelete = async (e, id) => {
+    e.stopPropagation(); // Prevent row click
+    if (!confirm('Are you sure you want to permanently delete this document? This action cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      const response = await bulkDeleteUploads([id], true); // permanent delete
+      
+      // Clear cache
+      dataCache.clearByPattern('document:videos:');
+      dataCache.clearByPattern('dashboard:');
+      
+      // Refresh the list
+      await fetchVideos(currentPage);
+      
+      alert(response.message || 'Document deleted successfully');
     } catch (error) {
       console.error('Failed to delete:', error);
-      alert('Failed to delete document. Please try again.');
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to delete document. Please try again.';
+      alert(errorMessage);
     }
   };
 
@@ -245,10 +496,55 @@ export default function Document() {
             <h1 className={styles.pageTitle}>My Documents</h1>
           </div>
 
+          {/* Filter and Action Section */}
+          <div className={styles.filterSection} style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
+            <div className={styles.filterLeft}>
+              {/* Filter options can be added here */}
+            </div>
+            <div className={styles.filterRight} style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {selectedItems.size > 0 && (
+                <button
+                  onClick={handleBulkDelete}
+                  style={{
+                    padding: '8px 16px',
+                    background: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'background-color 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.background = '#dc2626'}
+                  onMouseLeave={(e) => e.target.style.background = '#ef4444'}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                  Delete Selected ({selectedItems.size})
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className={styles.tableContainer}>
             <table className={styles.documentTable}>
               <thead>
                 <tr>
+                  <th style={{ width: '40px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectAll}
+                      onChange={handleSelectAll}
+                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                      aria-label="Select all documents"
+                    />
+                  </th>
                   <th>Name</th>
                   <th>Document Id</th>
                   <th>Type</th>
@@ -262,13 +558,13 @@ export default function Document() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan="8" className={styles.emptyState}>
+                    <td colSpan="9" className={styles.emptyState}>
                       Loading documents...
                     </td>
                   </tr>
                 ) : !videos || videos.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className={styles.emptyState}>
+                    <td colSpan="9" className={styles.emptyState}>
                       No documents available
                     </td>
                   </tr>
@@ -279,6 +575,15 @@ export default function Document() {
                       className={styles.documentTableRow}
                       onClick={() => handleRowClick(item)}
                     >
+                      <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.has(item.id)}
+                          onChange={(e) => handleSelectItem(e, item.id)}
+                          style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                          aria-label={`Select ${item.name}`}
+                        />
+                      </td>
                       <td>
                         <div className={styles.documentNameCell}>
                           <div className={styles.documentIcon}>
@@ -557,7 +862,32 @@ export default function Document() {
                     aria-labelledby="summary-tab"
                   >
                     <div className={styles.summaryBox} role="region" aria-label="Document summary">
-                      <p>{selectedDocument?.summary || documentData?.summary || 'No summary available. The video may still be processing.'}</p>
+                      {summariesLoading ? (
+                        <p>Loading summaries...</p>
+                      ) : summaries.length > 0 ? (
+                        <div>
+                          {summaries.map((summary, index) => (
+                            <div key={summary.id || index} style={{ marginBottom: '24px', padding: '16px', background: '#f5f5f5', borderRadius: '8px' }}>
+                              <h3 style={{ marginTop: 0, marginBottom: '12px', fontSize: '16px', fontWeight: '600' }}>
+                                Batch {summary.batch_number} of {summary.total_batches || summaries.length}
+                                {summary.batch_start_frame && summary.batch_end_frame && (
+                                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>
+                                    (Frames {summary.batch_start_frame}-{summary.batch_end_frame})
+                                  </span>
+                                )}
+                              </h3>
+                              <p style={{ margin: 0, lineHeight: '1.6', color: '#333' }}>{summary.summary_text}</p>
+                              {summary.created_at && (
+                                <p style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
+                                  Generated: {new Date(summary.created_at).toLocaleString()}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p>No summaries available. The video may still be processing or summaries have not been generated yet.</p>
+                      )}
                     </div>
                   </section>
                 )}
@@ -685,31 +1015,87 @@ export default function Document() {
                     aria-labelledby="pdf-tab"
                   >
                     <div className={styles.pdfContainer}>
-                      {selectedDocument?.pdfUrl || documentData?.video_metadata?.video_file_number || selectedDocument?.video_file_number ? (
-                        <>
-                          {/* TODO: Generate PDF URL from video_file_number or job_id */}
-                          <div className={styles.emptyState}>
-                            PDF generation is in progress. Please check back later or download the document from the process data page.
-                          </div>
-                          {(selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number) && (
-                            <div className={styles.pdfActions}>
-                              <a
-                                href={`/api/download/${selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number}?format=pdf`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className={styles.pdfLink}
-                                aria-label={`Download PDF for ${selectedDocument?.name || 'document'}`}
-                              >
-                                Download PDF
-                              </a>
+                      {(() => {
+                        // Try multiple ways to get video ID
+                        const videoId = selectedDocument?.id || selectedDocument?.video_id || documentData?.video_metadata?.video_id;
+                        const summaryPdfUrl = documentData?.summary_pdf_url || documentData?.video_metadata?.summary_pdf_url;
+                        const videoFileNumber = selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number;
+                        
+                        console.log('PDF Tab - videoId:', videoId, 'summaryPdfUrl:', summaryPdfUrl, 'documentData:', documentData);
+                        
+                        // Always try to use the API endpoint if we have a videoId
+                        // The backend will handle checking if the PDF exists
+                        let pdfUrl = null;
+                        if (videoId) {
+                          pdfUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/${videoId}/summary-pdf`;
+                          console.log('Constructed PDF URL from videoId:', pdfUrl);
+                        } else if (summaryPdfUrl) {
+                          // Fallback: if we have a direct URL, use it
+                          if (summaryPdfUrl.startsWith('http')) {
+                            pdfUrl = summaryPdfUrl;
+                          } else {
+                            // Relative path - try to construct API URL if we can get videoId from documentData
+                            const fallbackVideoId = documentData?.video_metadata?.video_id;
+                            if (fallbackVideoId) {
+                              pdfUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/${fallbackVideoId}/summary-pdf`;
+                            }
+                          }
+                          console.log('Constructed PDF URL from summaryPdfUrl:', pdfUrl);
+                        }
+                        
+                        if (!pdfUrl && !videoId) {
+                          return (
+                            <div className={styles.emptyState}>
+                              <p>No PDF available. The video may still be processing or the summary PDF has not been generated yet.</p>
                             </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className={styles.emptyState}>
-                          PDF not available. The document may still be processing.
-                        </div>
-                      )}
+                          );
+                        }
+                          
+                        if (pdfUrl) {
+                          // Add token to PDF URL for iframe authentication
+                          const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+                          const pdfUrlWithAuth = token ? `${pdfUrl}?token=${encodeURIComponent(token)}` : pdfUrl;
+                          
+                          return (
+                            <>
+                              <div style={{ width: '100%', height: '800px', border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px' }}>
+                                <iframe
+                                  src={pdfUrlWithAuth}
+                                  style={{ width: '100%', height: '100%', border: 'none' }}
+                                  title={`PDF viewer for ${selectedDocument?.name || 'document'}`}
+                                />
+                              </div>
+                              <div className={styles.pdfActions} style={{ marginTop: '16px' }}>
+                                <a
+                                  href={pdfUrl || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.pdfLink}
+                                  download={`${videoFileNumber || 'summary'}_summary.pdf`}
+                                  aria-label={`Download PDF for ${selectedDocument?.name || 'document'}`}
+                                  style={{ 
+                                    display: 'inline-block',
+                                    padding: '10px 20px',
+                                    background: '#667eea',
+                                    color: 'white',
+                                    textDecoration: 'none',
+                                    borderRadius: '6px',
+                                    fontWeight: '500'
+                                  }}
+                                >
+                                  Download PDF
+                                </a>
+                              </div>
+                            </>
+                          );
+                        } else {
+                          return (
+                            <div className={styles.emptyState}>
+                              PDF not available. The document may still be processing or summary PDF has not been generated yet.
+                            </div>
+                          );
+                        }
+                      })()}
                     </div>
                   </section>
                 )}
@@ -737,12 +1123,30 @@ export default function Document() {
                             let stepsData = [];
                             
                             if (documentData?.frames && Array.isArray(documentData.frames)) {
-                              stepsData = documentData.frames.map((frame, index) => ({
-                                id: frame.frame_id || index + 1,
-                                timestamp: formatTimestamp(frame.timestamp),
-                                description: frame.description || frame.ocr_text || 'Frame analysis',
-                                metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
-                              }));
+                              stepsData = documentData.frames.map((frame, index) => {
+                                // Extract meta_tags from GPT response dynamically
+                                let metaTags = ['frame', 'analysis']; // Default fallback
+                                
+                                if (frame.gpt_response && frame.gpt_response.meta_tags) {
+                                  // Use meta_tags from GPT response if available
+                                  metaTags = Array.isArray(frame.gpt_response.meta_tags) 
+                                    ? frame.gpt_response.meta_tags 
+                                    : ['gpt', 'analysis'];
+                                } else if (frame.ocr_text) {
+                                  // Fallback to OCR tags if no GPT meta_tags
+                                  metaTags = ['ocr', 'text'];
+                                } else if (frame.gpt_response) {
+                                  // Has GPT response but no meta_tags
+                                  metaTags = ['gpt', 'analysis'];
+                                }
+                                
+                                return {
+                                  id: frame.frame_id || index + 1,
+                                  timestamp: formatTimestamp(frame.timestamp),
+                                  description: frame.description || frame.ocr_text || 'Frame analysis',
+                                  metaTags: metaTags
+                                };
+                              });
                             } else if (selectedDocument?.steps && Array.isArray(selectedDocument.steps)) {
                               stepsData = selectedDocument.steps;
                             }

@@ -1,14 +1,39 @@
 import '../styles/globals.css'
 import ErrorBoundary from '../components/ErrorBoundary'
 import Head from 'next/head'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { logPageView } from '../lib/activityLogger'
+import { isAuthenticated, requiresAuth } from '../lib/auth'
 
 export default function App({ Component, pageProps }) {
   const router = useRouter()
+  const [isMounted, setIsMounted] = useState(false)
 
   useEffect(() => {
+    // Mark component as mounted (client-side only)
+    setIsMounted(true)
+  }, [])
+
+  useEffect(() => {
+    // Only run authentication checks on client-side after mount
+    if (!isMounted || typeof window === 'undefined' || !router.isReady) return;
+
+    const pathname = router.pathname;
+    
+    // Check if route requires authentication
+    if (requiresAuth(pathname)) {
+      // If not authenticated, redirect to auth page
+      if (!isAuthenticated()) {
+        router.replace('/auth');
+        return;
+      }
+    } else if (pathname === '/auth' && isAuthenticated()) {
+      // If on auth page but already authenticated, redirect to dashboard
+      router.replace('/dashboard');
+      return;
+    }
+
     // Log initial page view
     const logCurrentPage = () => {
       if (router.isReady) {
@@ -27,7 +52,13 @@ export default function App({ Component, pageProps }) {
 
     // Log on route change
     const handleRouteChange = (url) => {
-      const pathname = url.split('?')[0] // Remove query params
+      // Check auth on route change
+      const pathname = url.split('?')[0];
+      if (requiresAuth(pathname) && !isAuthenticated()) {
+        router.replace('/auth');
+        return;
+      }
+
       const pageName = pathname === '/' ? 'Home' : pathname.replace('/', '').replace(/-/g, ' ') || 'Unknown'
       logPageView(pageName, {
         path: url,
@@ -46,7 +77,7 @@ export default function App({ Component, pageProps }) {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.isReady, router.pathname, router.asPath])
+  }, [isMounted, router.isReady, router.pathname, router.asPath])
 
   return (
     <>

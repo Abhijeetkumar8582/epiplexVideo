@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logVideoUpload } from '../lib/activityLogger';
-import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus } from '../lib/api';
+import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus, bulkDeleteUploads } from '../lib/api';
+import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 export default function ProcessData() {
   const router = useRouter();
@@ -71,6 +72,10 @@ export default function ProcessData() {
   // Dropdown and status view state
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [viewStatusItem, setViewStatusItem] = useState(null);
+  
+  // Selection state
+  const [selectedItems, setSelectedItems] = useState(new Set());
+  const [selectAll, setSelectAll] = useState(false);
 
   useEffect(() => {
     // Log page view
@@ -85,11 +90,44 @@ export default function ProcessData() {
   useEffect(() => {
     if (!isInitialMount) {
       fetchVideos(currentPage);
+      // Clear selection when page changes
+      setSelectedItems(new Set());
+      setSelectAll(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);
 
+  // Update select all state when tableData or selection changes (memoized)
+  const selectAllState = useMemo(() => {
+    if (tableData.length > 0) {
+      const allCurrentPageIds = tableData.map(v => v.id);
+      return allCurrentPageIds.length > 0 && 
+             allCurrentPageIds.every(id => selectedItems.has(id));
+    }
+    return false;
+  }, [selectedItems, tableData]);
+
+  useEffect(() => {
+    setSelectAll(selectAllState);
+  }, [selectAllState]);
+
+  const getCacheKey = (page, status, fileName) => {
+    return `process-data:videos:page:${page}:status:${status || 'all'}:fileName:${fileName || 'all'}`;
+  };
+
   const fetchVideos = async (page = currentPage) => {
+    const cacheKey = getCacheKey(page, filterData.status, filterData.fileName);
+    
+    // Check cache first
+    const cachedData = dataCache.get(cacheKey);
+    if (cachedData) {
+      setTableData(cachedData.videos);
+      setTotalRecords(cachedData.totalRecords);
+      setTotalPages(cachedData.totalPages);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const response = await getVideosPanel({ 
@@ -139,10 +177,22 @@ export default function ProcessData() {
         setTableData(mappedData);
         
         // Update pagination info
-        if (response.total !== undefined) {
-          setTotalRecords(response.total);
-          setTotalPages(Math.ceil(response.total / pageSize));
-        }
+        const totalRecords = response.total !== undefined ? response.total : 0;
+        const totalPages = Math.ceil(totalRecords / pageSize);
+        
+        setTotalRecords(totalRecords);
+        setTotalPages(totalPages);
+
+        // Cache the data
+        dataCache.set(cacheKey, {
+          videos: mappedData,
+          totalRecords,
+          totalPages
+        }, CACHE_DURATION.VIDEO_LIST);
+      } else {
+        setTableData([]);
+        setTotalRecords(0);
+        setTotalPages(1);
       }
     } catch (error) {
       console.error('Failed to fetch videos:', error);
@@ -181,6 +231,10 @@ export default function ProcessData() {
     try {
       // Call delete API endpoint with permanent=true to hard delete from database
       await deleteUpload(id, true);
+      // Invalidate cache to ensure fresh data
+      dataCache.clearByPattern('process-data:videos:');
+      dataCache.clearByPattern('document:videos:');
+      dataCache.clearByPattern('dashboard:');
       // Refresh the list
       await fetchVideos();
     } catch (error) {
@@ -258,6 +312,10 @@ export default function ProcessData() {
     
     try {
       await retryUpload(item.id);
+      // Invalidate cache to ensure fresh data
+      dataCache.clearByPattern('process-data:videos:');
+      dataCache.clearByPattern('document:videos:');
+      dataCache.clearByPattern('dashboard:');
       // Refresh the list
       await fetchVideos();
       alert('Video processing restarted successfully');
@@ -430,6 +488,11 @@ export default function ProcessData() {
         
         const entryId = response.data?.id || Date.now();
         const jobId = response.data?.job_id || null;
+        
+        // Invalidate cache to ensure fresh data
+        dataCache.clearByPattern('process-data:videos:');
+        dataCache.clearByPattern('document:videos:');
+        dataCache.clearByPattern('dashboard:');
         
         // Refresh the list to show the new entry
         await fetchVideos();
@@ -680,6 +743,73 @@ export default function ProcessData() {
     setSortBy(null);
   };
 
+  const handleSelectAll = (e) => {
+    e.stopPropagation();
+    const isChecked = e.target.checked;
+    
+    if (isChecked && tableData.length > 0) {
+      // Select all items on current page
+      const allIds = new Set(tableData.map(item => item.id));
+      setSelectedItems(prev => {
+        const newSet = new Set(prev);
+        allIds.forEach(id => newSet.add(id));
+        return newSet;
+      });
+    } else {
+      // Deselect all items on current page only
+      const currentPageIds = new Set(tableData.map(item => item.id));
+      setSelectedItems(prev => {
+        const newSet = new Set(prev);
+        currentPageIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+    }
+  };
+
+  const handleSelectItem = (e, id) => {
+    e.stopPropagation();
+    const newSelected = new Set(selectedItems);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedItems(newSelected);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedItems.size === 0) {
+      alert('Please select at least one item to delete.');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to permanently delete ${selectedItems.size} item(s)? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const uploadIds = Array.from(selectedItems);
+      const response = await bulkDeleteUploads(uploadIds, true); // permanent delete
+      
+      // Clear cache
+      dataCache.clearByPattern('process-data:videos:');
+      dataCache.clearByPattern('dashboard:');
+      
+      // Clear selection
+      setSelectedItems(new Set());
+      setSelectAll(false);
+      
+      // Refresh the list
+      await fetchVideos(currentPage);
+      
+      alert(response.message || `Successfully deleted ${response.deleted_count || selectedItems.size} item(s)`);
+    } catch (error) {
+      console.error('Failed to delete items:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to delete items. Please try again.';
+      alert(errorMessage);
+    }
+  };
+
   const handleDateSelect = (date) => {
     setSelectedDate(date);
     setFilterData({ ...filterData, date });
@@ -815,7 +945,34 @@ export default function ProcessData() {
                 </div>
               )}
             </div>
-            <div className={styles.filterRight}>
+            <div className={styles.filterRight} style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {selectedItems.size > 0 && (
+                <button
+                  onClick={handleBulkDelete}
+                  style={{
+                    padding: '8px 16px',
+                    background: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'background-color 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.background = '#dc2626'}
+                  onMouseLeave={(e) => e.target.style.background = '#ef4444'}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                  Delete Selected ({selectedItems.size})
+                </button>
+              )}
               <button className={styles.moreFiltersButton} onClick={() => setFilterOpen(!filterOpen)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="4" y1="21" x2="4" y2="14"></line>
@@ -991,8 +1148,14 @@ export default function ProcessData() {
             <table className={styles.processDataTable}>
               <thead>
                 <tr>
-                  <th>
-                    <input type="checkbox" className={styles.tableCheckbox} />
+                  <th style={{ width: '40px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectAll}
+                      onChange={handleSelectAll}
+                      style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                      aria-label="Select all items"
+                    />
                   </th>
                   <th>Name</th>
                   <th>Last Activity</th>
@@ -1017,8 +1180,14 @@ export default function ProcessData() {
                 ) : (
                   tableData.map((item) => (
                     <tr key={item.id}>
-                      <td>
-                        <input type="checkbox" className={styles.tableCheckbox} />
+                      <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.has(item.id)}
+                          onChange={(e) => handleSelectItem(e, item.id)}
+                          style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                          aria-label={`Select ${item.name}`}
+                        />
                       </td>
                       <td>
                         <div className={styles.documentNameCell}>

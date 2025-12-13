@@ -4,6 +4,7 @@ import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logAccountUpdate } from '../lib/activityLogger';
 import { getCurrentUser } from '../lib/api';
+import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 export default function Account() {
   const [isEditMode, setIsEditMode] = useState(false);
@@ -47,9 +48,32 @@ export default function Account() {
   }, []);
 
   const fetchUserData = async () => {
+    const CACHE_KEY = 'account:userData';
+    
+    // Check cache first
+    const cachedData = dataCache.get(CACHE_KEY);
+    if (cachedData) {
+      setUser(cachedData);
+      // Update form data with cached user data
+      if (cachedData) {
+        setFormData(prev => ({
+          ...prev,
+          fullName: cachedData.full_name || prev.fullName,
+          email: cachedData.email || prev.email
+        }));
+      }
+      return;
+    }
+
     try {
       const userData = await getCurrentUser();
       setUser(userData);
+      
+      // Cache the data
+      if (userData) {
+        dataCache.set(CACHE_KEY, userData, CACHE_DURATION.USER_DATA);
+      }
+      
       // Update form data with user data if available
       if (userData) {
         setFormData(prev => ({

@@ -1,13 +1,19 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import SEO from '../components/SEO';
+import { isAuthenticated } from '../lib/auth';
 
 export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
     if (router.isReady) {
-      router.push('/dashboard');
+      // Check if user is authenticated
+      if (isAuthenticated()) {
+        router.push('/dashboard');
+      } else {
+        router.push('/auth');
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.isReady]);

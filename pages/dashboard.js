@@ -1,15 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView } from '../lib/activityLogger';
 import { getActivityStats, getVideoStats } from '../lib/api';
+import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [videoStats, setVideoStats] = useState(null);
   const [activityStats, setActivityStats] = useState(null);
   const [error, setError] = useState(null);
+
+  const CACHE_KEY_VIDEO_STATS = 'dashboard:videoStats';
+  const CACHE_KEY_ACTIVITY_STATS = 'dashboard:activityStats';
 
   useEffect(() => {
     // Log page view
@@ -24,25 +28,62 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       
-      // Fetch video statistics (required) and activity statistics (optional) in parallel
-      const [videoData, activityData] = await Promise.allSettled([
-        getVideoStats(),
-        getActivityStats(30).catch(err => {
-          console.warn('Failed to fetch activity stats:', err);
-          return null;
-        })
-      ]);
+      // Check cache first
+      const cachedVideoStats = dataCache.get(CACHE_KEY_VIDEO_STATS);
+      const cachedActivityStats = dataCache.get(CACHE_KEY_ACTIVITY_STATS);
+
+      // Use cached data if available
+      if (cachedVideoStats) {
+        setVideoStats(cachedVideoStats);
+      }
+
+      if (cachedActivityStats) {
+        setActivityStats(cachedActivityStats);
+      }
+
+      // If we have both cached, skip API calls
+      if (cachedVideoStats && cachedActivityStats) {
+        setLoading(false);
+        return;
+      }
+
+      // Fetch only missing data
+      const promises = [];
+      if (!cachedVideoStats) {
+        promises.push(getVideoStats());
+      } else {
+        promises.push(Promise.resolve(cachedVideoStats));
+      }
+
+      if (!cachedActivityStats) {
+        promises.push(
+          getActivityStats(30).catch(err => {
+            console.warn('Failed to fetch activity stats:', err);
+            return null;
+          })
+        );
+      } else {
+        promises.push(Promise.resolve(cachedActivityStats));
+      }
+
+      const [videoData, activityData] = await Promise.allSettled(promises);
       
-      // Handle video stats (required)
+      // Handle video stats
       if (videoData.status === 'fulfilled') {
-        setVideoStats(videoData.value);
+        const data = videoData.value;
+        setVideoStats(data);
+        // Cache the data
+        dataCache.set(CACHE_KEY_VIDEO_STATS, data, CACHE_DURATION.DASHBOARD_STATS);
       } else {
         throw videoData.reason;
       }
       
-      // Handle activity stats (optional)
+      // Handle activity stats
       if (activityData.status === 'fulfilled' && activityData.value) {
-        setActivityStats(activityData.value);
+        const data = activityData.value;
+        setActivityStats(data);
+        // Cache the data
+        dataCache.set(CACHE_KEY_ACTIVITY_STATS, data, CACHE_DURATION.DASHBOARD_STATS);
       }
     } catch (err) {
       console.error('Failed to fetch dashboard data:', err);
@@ -86,8 +127,8 @@ export default function Dashboard() {
     return `${secs}s`;
   };
 
-  // Calculate KPI Cards Data from real stats
-  const kpiCards = videoStats ? [
+  // Calculate KPI Cards Data from real stats (memoized)
+  const kpiCards = useMemo(() => videoStats ? [
     {
       id: 'total-processed',
       title: 'Total Processed',
@@ -130,10 +171,10 @@ export default function Dashboard() {
         ? ((videoStats.processingVideos || 0) / (videoStats.totalVideos || 1)) * 100
         : 0
     }
-  ] : [];
+  ] : [], [videoStats]);
 
-  // Graph Cards Data from real stats
-  const graphCards = videoStats ? [
+  // Graph Cards Data from real stats (memoized)
+  const graphCards = useMemo(() => videoStats ? [
     {
       id: 'monthly-processing',
       title: 'Monthly Processing',
@@ -158,7 +199,7 @@ export default function Dashboard() {
         count: value || 0
       })) : []
     }
-  ] : [];
+  ] : [], [videoStats]);
 
   // Insight Cards Data from real stats
   const getTopApplication = () => {
@@ -192,7 +233,7 @@ export default function Dashboard() {
   const topLang = getTopLanguage();
   const bestMonth = getBestMonth();
 
-  const insightCards = videoStats ? [
+  const insightCards = useMemo(() => videoStats ? [
     {
       id: 'status-distribution',
       title: 'Status Distribution',
@@ -235,7 +276,7 @@ export default function Dashboard() {
         ? `${Math.round(((topLang[1] || 0) / (videoStats.totalVideos || 1)) * 100)}% of total`
         : '0% of total'
     }
-  ] : [];
+  ] : [], [videoStats, topApp, topLang, bestMonth]);
 
   // Sample metrics data (keeping for structured data)
   const metrics = [

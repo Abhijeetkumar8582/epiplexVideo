@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import styles from '../styles/Auth.module.css';
 import { login, signup, getGoogleAuthUrl } from '../lib/api';
+import { isAuthenticated } from '../lib/auth';
 
 export default function Auth() {
   const router = useRouter();
@@ -18,11 +19,8 @@ export default function Auth() {
 
   // Redirect if already logged in
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        router.push('/dashboard');
-      }
+    if (router.isReady && isAuthenticated()) {
+      router.push('/dashboard');
     }
   }, [router]);
 
