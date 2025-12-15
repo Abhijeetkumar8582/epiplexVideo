@@ -28,63 +28,9 @@ export default function ActivityLog() {
   const [filterCalendarMonth, setFilterCalendarMonth] = useState(new Date());
   const calendarRef = useRef(null);
 
-  useEffect(() => {
-    logPageView('Activity Log');
-    fetchActivityActions();
-  }, [fetchActivityActions]);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [currentPage, selectedAction, startDate, endDate, fetchLogs]);
-
-  // Debounced search - separate effect to avoid triggering on every keystroke
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchQuery !== undefined) {
-        setCurrentPage(1);
-        fetchLogs();
-      }
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, fetchLogs]);
-
-  // Close calendar when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (calendarRef.current && !calendarRef.current.contains(event.target)) {
-        setDatePickerOpen(false);
-      }
-    };
-
-    if (datePickerOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [datePickerOpen]);
-
   const getCacheKey = useCallback(() => {
     return `activity-log:page:${currentPage}:action:${selectedAction || 'all'}:search:${searchQuery || 'none'}:start:${startDate || 'none'}:end:${endDate || 'none'}`;
   }, [currentPage, selectedAction, searchQuery, startDate, endDate]);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [currentPage, selectedAction, startDate, endDate, fetchLogs]);
-
-  // Debounced search - separate effect to avoid triggering on every keystroke
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchQuery !== undefined) {
-        setCurrentPage(1);
-        fetchLogs();
-      }
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, fetchLogs]);
 
   const fetchActivityActions = useCallback(async () => {
     try {
@@ -126,6 +72,8 @@ export default function ActivityLog() {
 
       const response = await getActivityLogs(params);
       
+      console.log('Activity logs API response:', response);
+      
       if (response && response.logs) {
         setLogs(response.logs);
         setTotalRecords(response.total || response.logs.length);
@@ -137,6 +85,11 @@ export default function ActivityLog() {
           total: response.total || response.logs.length,
           page_size: pageSize
         }, CACHE_DURATION.VIDEO_LIST);
+      } else if (response && Array.isArray(response)) {
+        // Handle case where API returns array directly
+        setLogs(response);
+        setTotalRecords(response.length);
+        setTotalPages(Math.ceil(response.length / pageSize));
       } else {
         setLogs([]);
         setTotalRecords(0);
@@ -144,7 +97,8 @@ export default function ActivityLog() {
       }
     } catch (err) {
       console.error('Failed to fetch activity logs:', err);
-      setError('Failed to load activity logs. Please try again.');
+      console.error('Error details:', err.response?.data || err.message);
+      setError(`Failed to load activity logs: ${err.response?.data?.detail || err.message || 'Unknown error'}`);
       setLogs([]);
       setTotalRecords(0);
       setTotalPages(1);
@@ -152,6 +106,46 @@ export default function ActivityLog() {
       setLoading(false);
     }
   }, [getCacheKey, currentPage, selectedAction, searchQuery, startDate, endDate]);
+
+  // Initial load and fetch activity actions
+  useEffect(() => {
+    logPageView('Activity Log');
+    fetchActivityActions();
+  }, [fetchActivityActions]);
+
+  // Fetch logs when filters change
+  useEffect(() => {
+    fetchLogs();
+  }, [currentPage, selectedAction, startDate, endDate, fetchLogs]);
+
+  // Debounced search - separate effect to avoid triggering on every keystroke
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery !== undefined) {
+        setCurrentPage(1);
+        fetchLogs();
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, fetchLogs]);
+
+  // Close calendar when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (calendarRef.current && !calendarRef.current.contains(event.target)) {
+        setDatePickerOpen(false);
+      }
+    };
+
+    if (datePickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [datePickerOpen]);
 
   // Group logs by date
   const groupedLogs = useMemo(() => {

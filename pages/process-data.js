@@ -23,12 +23,12 @@ export default function ProcessData() {
   const [isUploading, setIsUploading] = useState(false);
 
   const processingSteps = [
-    { id: 1, label: 'Upload', number: '1' },
+    { id: 1, label: 'Extracting audio', number: '1' },
     { id: 2, label: 'Transcribe', number: '2' },
     { id: 3, label: 'Extract Keyframes', number: '3' },
     { id: 4, label: 'Analyze Frames', number: '4' },
-    { id: 5, label: 'Processing', number: '5' },
-    { id: 6, label: 'Saving', number: '6' },
+    { id: 5, label: 'Summary Generation', number: '5' },
+    { id: 6, label: 'PDF Generation', number: '6' },
     { id: 7, label: 'Ready', number: '7' }
   ];
 
@@ -601,26 +601,28 @@ export default function ProcessData() {
             stepIndex = 2;
           }
           
-          // Step 3: Analyze Frames (GPT processing in batches of 5)
+          // Step 4: Analyze Frames (GPT processing in batches of 5)
           if (stepProgress.analyze_frames === 'processing') {
             stepIndex = 3;
           } else if (stepProgress.analyze_frames === 'completed') {
             stepIndex = 3;
           }
           
-          // Step 4: Processing/Finalizing
-          if (stepProgress.process === 'processing' || stepProgress.complete === 'processing') {
+          // Step 5: Summary Generation
+          if (stepProgress.summary_generation === 'processing' || stepProgress.analyze_important_frames === 'processing') {
             stepIndex = 4;
-          } else if (stepProgress.process === 'completed' || stepProgress.complete === 'processing') {
+          } else if (stepProgress.summary_generation === 'completed' && stepProgress.generate_pdf !== 'completed') {
             stepIndex = 4;
           }
           
-          // Step 5: Saving/Complete
-          if (stepProgress.complete === 'completed' || (stepProgress.complete === 'completed' && status.status === 'processing')) {
+          // Step 6: PDF Generation
+          if (stepProgress.generate_pdf === 'processing') {
+            stepIndex = 5;
+          } else if (stepProgress.generate_pdf === 'completed' && status.status !== 'completed') {
             stepIndex = 5;
           }
           
-          // Step 6: Ready (completed)
+          // Step 7: Ready (completed)
           if (status.status === 'completed') {
             stepIndex = 6;
           }
@@ -1238,7 +1240,11 @@ export default function ProcessData() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (item.video_file_number) {
-                                  router.push(`/document?video=${item.video_file_number}`);
+                                  // Navigate with query parameter - this will trigger fresh data fetch in document page
+                                  router.push({
+                                    pathname: '/document',
+                                    query: { video: item.video_file_number }
+                                  }, undefined, { shallow: false });
                                 } else {
                                   router.push(`/document`);
                                 }

@@ -5,7 +5,7 @@ import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logDocumentView } from '../lib/activityLogger';
-import { getVideosPanel, getDocument, bulkDeleteUploads, getVideoSummaries } from '../lib/api';
+import { getVideosPanel, getDocument, bulkDeleteUploads } from '../lib/api';
 import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -20,6 +20,23 @@ export default function Document() {
   const [documentData, setDocumentData] = useState(null);
   const [summaries, setSummaries] = useState([]);
   const [summariesLoading, setSummariesLoading] = useState(false);
+  
+  // Get user's first name from localStorage
+  const getUserFirstName = () => {
+    if (typeof window !== 'undefined') {
+      try {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          const fullName = user.full_name || user.name || '';
+          return fullName.split(' ')[0] || 'U'; // Get first name, fallback to 'U'
+        }
+      } catch (e) {
+        console.warn('Failed to parse user from localStorage:', e);
+      }
+    }
+    return 'U'; // Default fallback
+  };
   
   // Selection state
   const [selectedItems, setSelectedItems] = useState(new Set());
@@ -67,14 +84,37 @@ export default function Document() {
 
   // Handle query parameter to open specific document
   useEffect(() => {
-    if (router.query.video && videos && videos.length > 0) {
-      const video = videos.find(v => v.video_file_number === router.query.video);
-      if (video) {
-        handleRowClick(video);
-      }
+    const videoFileNumber = router.query.video;
+    
+    if (videoFileNumber) {
+      // Clear previous data immediately when video parameter changes
+      setDocumentData(null);
+      setSummaries([]);
+      setSelectedDocument(null);
+      
+      // Always fetch fresh data when video parameter changes
+      const fetchVideoData = async () => {
+        // Try to find video in current videos list first
+        let video = null;
+        if (videos && videos.length > 0) {
+          video = videos.find(v => v.video_file_number === videoFileNumber);
+        }
+        
+        // If video found in list, use it; otherwise create temp object
+        const documentToLoad = video || {
+          id: null,
+          video_file_number: videoFileNumber,
+          name: 'Loading...'
+        };
+        
+        // Always force fresh fetch
+        await handleRowClick(documentToLoad, true);
+      };
+      
+      fetchVideoData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.query.video, videos]);
+  }, [router.query.video]);
 
   const getCacheKey = (page) => `document:videos:page:${page}`;
 
@@ -164,18 +204,46 @@ export default function Document() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const fetchDocumentData = useCallback(async (videoFileNumber) => {
+  const fetchDocumentData = useCallback(async (videoFileNumber, forceRefresh = false) => {
+    if (!videoFileNumber) {
+      console.warn('fetchDocumentData called without videoFileNumber');
+      setDocumentData(null);
+      return;
+    }
+    
     const cacheKey = `document:data:${videoFileNumber}`;
     
+    // If force refresh, clear cache and fetch fresh data
+    if (forceRefresh) {
+      dataCache.remove(cacheKey);
+    } else {
     // Check cache first
     const cachedData = dataCache.get(cacheKey);
     if (cachedData) {
+        // Verify cached data matches the requested video
+        const cachedVideoNumber = cachedData.video_file_number || cachedData.video_metadata?.video_file_number;
+        if (cachedVideoNumber === videoFileNumber) {
       setDocumentData(cachedData);
-      // Update selected document with cached data
+      
+      // Extract summaries from cached data (summaries are now included in document response)
+      if (cachedData.summaries && Array.isArray(cachedData.summaries)) {
+        console.log('[fetchDocumentData] Found summaries in cached data:', cachedData.summaries.length);
+        setSummaries(cachedData.summaries);
+        setSummariesLoading(false);
+      } else {
+        console.log('[fetchDocumentData] No summaries in cached data');
+        setSummaries([]);
+        setSummariesLoading(false);
+      }
+      
+      // Update selected document with cached data including name
       setSelectedDocument(prev => {
-        if (prev && cachedData) {
+            if (prev && prev.video_file_number === videoFileNumber && cachedData) {
           return {
             ...prev,
+            name: cachedData.video_metadata?.name || cachedData.name || prev.name || 'Untitled Video', // Update name from cached data
+            id: cachedData.video_metadata?.video_id || prev.id, // Ensure id is set
+            video_id: cachedData.video_metadata?.video_id || prev.video_id, // Ensure video_id is set
             transcript: cachedData.transcript || null,
             transcribe: (cachedData.frames && Array.isArray(cachedData.frames)) 
               ? cachedData.frames.map((frame, index) => ({
@@ -189,34 +257,103 @@ export default function Document() {
               : 'No voice extraction available',
             summary: cachedData.summary || 'No summary available',
             steps: (cachedData.frames && Array.isArray(cachedData.frames))
-              ? cachedData.frames.map((frame, index) => ({
+                  ? cachedData.frames.map((frame, index) => {
+                      // Extract meta_tags from GPT response dynamically - always use what GPT returns
+                      let metaTags = [];
+                      
+                      // First, check if meta_tags exists directly in gpt_response (primary source)
+                      if (frame.gpt_response && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null) {
+                        // Use meta_tags directly from GPT response (even if empty array)
+                        if (Array.isArray(frame.gpt_response.meta_tags)) {
+                          metaTags = frame.gpt_response.meta_tags;
+                        } else if (typeof frame.gpt_response.meta_tags === 'string') {
+                          metaTags = [frame.gpt_response.meta_tags];
+                        }
+                      }
+                      // Also check if meta_tags exists at top level of frame (fallback check)
+                      else if (frame.meta_tags !== undefined && frame.meta_tags !== null) {
+                        if (Array.isArray(frame.meta_tags)) {
+                          metaTags = frame.meta_tags;
+                        } else if (typeof frame.meta_tags === 'string') {
+                          metaTags = [frame.meta_tags];
+                        }
+                      }
+                      
+                      // Only use fallback if GPT didn't provide meta_tags at all
+                      // If meta_tags is an empty array, that means GPT was called but returned no tags - keep it empty
+                      if (metaTags.length === 0) {
+                        const hasGptResponse = frame.gpt_response !== undefined && frame.gpt_response !== null;
+                        const hasMetaTagsInGpt = hasGptResponse && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null;
+                        
+                        // Only use fallback if GPT response doesn't exist OR meta_tags is truly missing (not empty array)
+                        if (!hasGptResponse || !hasMetaTagsInGpt) {
+                          // Fallback: use OCR or generic tags only if GPT didn't provide meta_tags
+                          if (frame.ocr_text) {
+                            metaTags = ['ocr', 'text'];
+                          } else if (hasGptResponse) {
+                            // GPT was called but no meta_tags field - use generic
+                            metaTags = ['gpt', 'analysis'];
+                          } else {
+                            // No GPT response at all
+                            metaTags = ['frame', 'analysis'];
+                          }
+                        }
+                        // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
+                        // that means GPT returned empty array - keep it empty (don't use fallback)
+                      }
+                      
+                      return {
                   id: frame.frame_id || index + 1,
                   timestamp: formatTimestamp(frame.timestamp),
                   description: frame.description || frame.ocr_text || 'Frame analysis',
-                  metaTags: frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis']
-                }))
+                        metaTags: metaTags
+                      };
+                    })
               : []
           };
         }
         return prev;
       });
       return;
+        } else {
+          // Cached data doesn't match, clear it
+          dataCache.remove(cacheKey);
+        }
+      }
     }
 
     try {
+      console.log('Fetching fresh document data for video:', videoFileNumber);
       const data = await getDocument(videoFileNumber);
+      console.log('Document data received:', data);
+      
+      // Verify the data matches the requested video
+      const dataVideoNumber = data?.video_file_number || data?.video_metadata?.video_file_number;
+      if (data && dataVideoNumber === videoFileNumber) {
       setDocumentData(data || null);
       
       // Cache the data
-      if (data) {
         dataCache.set(cacheKey, data, CACHE_DURATION.DOCUMENT_DATA);
-      }
+        
+        // Extract summaries from document data (summaries are now included in document response)
+        if (data.summaries && Array.isArray(data.summaries)) {
+          console.log('[fetchDocumentData] Found summaries in document response:', data.summaries.length);
+          setSummaries(data.summaries);
+          setSummariesLoading(false);
+        } else {
+          console.log('[fetchDocumentData] No summaries in document response');
+          setSummaries([]);
+          setSummariesLoading(false);
+        }
       
-      // Update selected document with real data
+      // Update selected document with real data including name
       setSelectedDocument(prev => {
-        if (prev && data) {
+          if (prev && prev.video_file_number === videoFileNumber && data) {
           return {
             ...prev,
+            name: data.video_metadata?.name || data.name || prev.name || 'Untitled Video', // Update name from documentData
+            id: data.video_metadata?.video_id || prev.id, // Ensure id is set from documentData
+            video_id: data.video_metadata?.video_id || prev.video_id, // Ensure video_id is set
             transcript: data.transcript || null,
             transcribe: (data.frames && Array.isArray(data.frames)) 
               ? data.frames.map((frame, index) => ({
@@ -231,19 +368,44 @@ export default function Document() {
             summary: data.summary || 'No summary available',
             steps: (data.frames && Array.isArray(data.frames))
               ? data.frames.map((frame, index) => {
-                  // Extract meta_tags from gpt_response if available
-                  let metaTags = ['frame', 'analysis'];
+                      // Extract meta_tags from GPT response dynamically - always use what GPT returns
+                      let metaTags = [];
+                      
+                      // Check if gpt_response exists and has meta_tags
                   if (frame.gpt_response) {
+                        // GPT was called, check for meta_tags
+                        if (frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null) {
+                          // Use meta_tags directly from GPT response (even if empty array)
                     if (Array.isArray(frame.gpt_response.meta_tags)) {
                       metaTags = frame.gpt_response.meta_tags;
-                    } else if (frame.gpt_response.meta_tags) {
+                          } else if (typeof frame.gpt_response.meta_tags === 'string') {
                       metaTags = [frame.gpt_response.meta_tags];
                     }
                   }
-                  // Fallback to old logic if no meta_tags
-                  if (metaTags.length === 0 || (metaTags.length === 1 && metaTags[0] === 'frame')) {
-                    metaTags = frame.ocr_text ? ['ocr', 'text'] : frame.gpt_response ? ['gpt', 'analysis'] : ['frame', 'analysis'];
-                  }
+                      }
+                      
+                      // Only use fallback if GPT didn't provide meta_tags at all
+                      // If meta_tags is an empty array, that means GPT was called but returned no tags - keep it empty
+                      if (metaTags.length === 0) {
+                        const hasGptResponse = frame.gpt_response !== undefined && frame.gpt_response !== null;
+                        const hasMetaTagsInGpt = hasGptResponse && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null;
+                        
+                        // Only use fallback if GPT response doesn't exist OR meta_tags is truly missing (not empty array)
+                        if (!hasGptResponse || !hasMetaTagsInGpt) {
+                          // Fallback: use OCR or generic tags only if GPT didn't provide meta_tags
+                          if (frame.ocr_text) {
+                            metaTags = ['ocr', 'text'];
+                          } else if (hasGptResponse) {
+                            // GPT was called but no meta_tags field - use generic
+                            metaTags = ['gpt', 'analysis'];
+                          } else {
+                            // No GPT response at all
+                            metaTags = ['frame', 'analysis'];
+                          }
+                        }
+                        // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
+                        // that means GPT returned empty array - keep it empty (don't use fallback)
+                      }
                   
                   return {
                     id: frame.frame_id || index + 1,
@@ -257,6 +419,14 @@ export default function Document() {
         }
         return prev;
       });
+      } else {
+        // Data doesn't match requested video
+        console.warn('Fetched data does not match requested video:', {
+          requested: videoFileNumber,
+          received: dataVideoNumber
+        });
+        setDocumentData(null);
+      }
     } catch (error) {
       console.error('Failed to fetch document:', error);
       // Set empty data on error
@@ -264,52 +434,17 @@ export default function Document() {
     }
   }, []);
   
-  const fetchSummaries = useCallback(async (videoId) => {
-    if (!videoId) {
-      console.warn('fetchSummaries called without videoId');
-      return;
-    }
-    
-    try {
-      setSummariesLoading(true);
-      console.log('Calling getVideoSummaries with videoId:', videoId);
-      const data = await getVideoSummaries(videoId);
-      console.log('Summaries response:', data);
-      // Handle both response formats: {summaries: [...]} or direct array
-      let summariesList = [];
-      if (Array.isArray(data)) {
-        summariesList = data;
-      } else if (data && data.summaries && Array.isArray(data.summaries)) {
-        summariesList = data.summaries;
-      } else if (data && Array.isArray(data)) {
-        summariesList = data;
-      }
-      
-      if (summariesList.length > 0) {
-        setSummaries(summariesList);
-        console.log('Set summaries:', summariesList.length);
-      } else {
-        console.log('No summaries in response');
-        setSummaries([]);
-      }
-    } catch (error) {
-      console.error('Failed to fetch summaries:', error);
-      console.error('Error details:', error.response?.data || error.message);
-      setSummaries([]);
-    } finally {
-      setSummariesLoading(false);
-    }
-  }, []);
-
   // Removed dummy data - using real data from API
 
-  const handleRowClick = useCallback(async (document) => {
+  const handleRowClick = useCallback(async (document, forceRefresh = true) => {
     if (!document) return;
     
+    // Clear previous data immediately when switching documents
+    setDocumentData(null);
+    setSummaries([]);
     setSelectedDocument(document);
     setDetailViewOpen(true);
     setActiveTab('transcribe'); // Reset to first tab when opening
-    setDocumentData(null); // Clear previous document data
     
     // Log document view
     if (document && document.video_file_number) {
@@ -318,45 +453,46 @@ export default function Document() {
         name: document.name || 'Unknown'
       });
       
-      // Fetch full document data if video_file_number is available
-      await fetchDocumentData(document.video_file_number);
+      console.log('Fetching fresh document data for:', document.video_file_number, 'forceRefresh:', forceRefresh);
       
-      // Fetch summaries if video_id is available
-      // Try both id and video_id fields
-      const videoId = document.id || document.video_id || document.video_id;
-      if (videoId) {
-        console.log('Fetching summaries for video_id:', videoId, 'from document:', document);
-        await fetchSummaries(videoId);
-      } else {
-        console.warn('No video ID found in document:', document);
-        setSummaries([]);
-      }
+      // Always fetch fresh document data (force refresh by default)
+      await fetchDocumentData(document.video_file_number, forceRefresh);
+      
+      // Summaries are included in documentData response, they will be extracted when documentData loads
+      console.log('[handleRowClick] Summaries will be extracted from documentData when it loads');
     } else {
       // If no video_file_number, set empty data
       setDocumentData(null);
       setSummaries([]);
     }
-  }, [fetchDocumentData, fetchSummaries]);
+  }, [fetchDocumentData]);
 
-  // Refetch summaries when documentData is loaded (in case video_id wasn't available initially)
+  // Extract summaries from documentData when it loads (summaries are included in document response)
   useEffect(() => {
-    if (documentData?.video_metadata?.video_id && summaries.length === 0 && !summariesLoading && selectedDocument) {
-      const videoId = documentData.video_metadata.video_id;
-      console.log('Refetching summaries after documentData loaded with video_id:', videoId);
-      fetchSummaries(videoId);
-    }
-  }, [documentData?.video_metadata?.video_id, summaries.length, summariesLoading, selectedDocument, fetchSummaries]);
-
-  // Refetch summaries when switching to summary tab if we have a video ID but no summaries
-  useEffect(() => {
-    if (activeTab === 'summary' && selectedDocument && summaries.length === 0 && !summariesLoading) {
-      const videoId = selectedDocument.id || selectedDocument.video_id || documentData?.video_metadata?.video_id;
-      if (videoId) {
-        console.log('Refetching summaries when switching to summary tab');
-        fetchSummaries(videoId);
+    if (documentData) {
+      // Set loading state based on whether documentData is still being fetched
+      if (documentData.summaries !== undefined) {
+        // Summaries field exists (could be array or null)
+        if (Array.isArray(documentData.summaries) && documentData.summaries.length > 0) {
+          console.log('[useEffect] Found summaries in documentData:', documentData.summaries.length);
+          setSummaries(documentData.summaries);
+        } else {
+          // Summaries is null or empty array
+          console.log('[useEffect] No summaries in documentData (null or empty)');
+          setSummaries([]);
+        }
+        setSummariesLoading(false);
+      } else {
+        // Document data loaded but summaries field not present (shouldn't happen, but handle gracefully)
+        console.log('[useEffect] documentData loaded but summaries field not present');
+        setSummaries([]);
+        setSummariesLoading(false);
       }
+    } else {
+      // Document data is being fetched, show loading
+      setSummariesLoading(true);
     }
-  }, [activeTab, selectedDocument, summaries.length, summariesLoading, documentData, fetchSummaries]);
+  }, [documentData]);
 
   const handleCloseDetail = () => {
     setDetailViewOpen(false);
@@ -455,12 +591,12 @@ export default function Document() {
     }
   };
 
-  const handleEdit = (e, document) => {
+  const handleEdit = useCallback(async (e, document) => {
     e.stopPropagation(); // Prevent row click
-    setSelectedDocument(document);
-    setDetailViewOpen(true);
-    setActiveTab('transcribe'); // Reset to first tab when opening
-  };
+    
+    // Use handleRowClick to ensure consistent behavior and fresh data fetch
+    await handleRowClick(document, true);
+  }, [handleRowClick]);
 
   const structuredData = {
     '@context': 'https://schema.org',
@@ -616,14 +752,25 @@ export default function Document() {
                       </td>
                       <td>
                         <div className={styles.documentUsernameCell}>
-                          <Image 
-                            src={item.avatar} 
-                            alt={item.createdBy}
-                            width={32}
-                            height={32}
+                          <div 
                             className={styles.documentUserAvatar}
-                          />
-                          <span className={styles.documentUsername}>{item.createdBy}</span>
+                            style={{
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '50%',
+                              backgroundColor: '#3b82f6',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#ffffff',
+                              fontSize: '14px',
+                              fontWeight: '600',
+                              flexShrink: 0
+                            }}
+                            title={getUserFirstName()}
+                          >
+                            {getUserFirstName().charAt(0).toUpperCase()}
+                          </div>
                         </div>
                       </td>
                       <td>
@@ -723,7 +870,11 @@ export default function Document() {
           <div className={styles.detailOverlay} onClick={handleCloseDetail}>
             <div className={styles.detailContainer} onClick={(e) => e.stopPropagation()}>
               <div className={styles.detailHeader}>
-                <h2 className={styles.detailTitle}>{selectedDocument?.name || 'Document'}</h2>
+                <h2 className={styles.detailTitle}>
+                  {selectedDocument?.name && selectedDocument.name !== 'Loading...' 
+                    ? selectedDocument.name 
+                    : (documentData?.video_metadata?.name || documentData?.name || 'Document')}
+                </h2>
                 <button className={styles.closeButton} onClick={handleCloseDetail}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -787,6 +938,15 @@ export default function Document() {
                   aria-controls="steps-panel"
                 >
                   Steps
+                </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'viewpage' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('viewpage')}
+                  role="tab"
+                  aria-selected={activeTab === 'viewpage'}
+                  aria-controls="viewpage-panel"
+                >
+                  View Page
                 </button>
               </nav>
 
@@ -1016,31 +1176,52 @@ export default function Document() {
                   >
                     <div className={styles.pdfContainer}>
                       {(() => {
-                        // Try multiple ways to get video ID
-                        const videoId = selectedDocument?.id || selectedDocument?.video_id || documentData?.video_metadata?.video_id;
-                        const summaryPdfUrl = documentData?.summary_pdf_url || documentData?.video_metadata?.summary_pdf_url;
+                        // Try multiple ways to get video ID and PDF URL
+                        const videoId = selectedDocument?.id || selectedDocument?.video_id || documentData?.video_metadata?.video_id || documentData?.video_id;
+                        const summaryPdfUrl = documentData?.summary_pdf_url || 
+                                              documentData?.video_metadata?.summary_pdf_url ||
+                                              selectedDocument?.summary_pdf_url;
                         const videoFileNumber = selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number;
                         
-                        console.log('PDF Tab - videoId:', videoId, 'summaryPdfUrl:', summaryPdfUrl, 'documentData:', documentData);
+                        console.log('PDF Tab Debug:', {
+                          videoId,
+                          summaryPdfUrl,
+                          videoFileNumber,
+                          hasDocumentData: !!documentData,
+                          hasSelectedDocument: !!selectedDocument,
+                          documentDataKeys: documentData ? Object.keys(documentData) : [],
+                          selectedDocumentKeys: selectedDocument ? Object.keys(selectedDocument) : []
+                        });
                         
-                        // Always try to use the API endpoint if we have a videoId
-                        // The backend will handle checking if the PDF exists
+                        // Check if summaryPdfUrl is a direct S3 URL (starts with https and contains s3 or epiplex bucket)
                         let pdfUrl = null;
+                        if (summaryPdfUrl && (summaryPdfUrl.startsWith('https://') && (summaryPdfUrl.includes('s3') || summaryPdfUrl.includes('epiplex')))) {
+                          // Direct S3 URL - use API endpoint to get presigned URL for private objects
                         if (videoId) {
+                            pdfUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/${videoId}/summary-pdf`;
+                            console.log('Using API endpoint for S3 PDF (will get presigned URL):', pdfUrl);
+                          } else {
+                            // Fallback to direct S3 URL if no videoId (may not work if bucket is private)
+                            pdfUrl = summaryPdfUrl;
+                            console.log('Using direct S3 URL (may require public access):', pdfUrl);
+                          }
+                        } else if (videoId) {
+                          // Use API endpoint which will handle both S3 and local files
                           pdfUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/${videoId}/summary-pdf`;
                           console.log('Constructed PDF URL from videoId:', pdfUrl);
                         } else if (summaryPdfUrl) {
                           // Fallback: if we have a direct URL, use it
                           if (summaryPdfUrl.startsWith('http')) {
                             pdfUrl = summaryPdfUrl;
+                            console.log('Using summaryPdfUrl as direct URL:', pdfUrl);
                           } else {
                             // Relative path - try to construct API URL if we can get videoId from documentData
-                            const fallbackVideoId = documentData?.video_metadata?.video_id;
+                            const fallbackVideoId = documentData?.video_metadata?.video_id || documentData?.video_id;
                             if (fallbackVideoId) {
                               pdfUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/${fallbackVideoId}/summary-pdf`;
+                              console.log('Constructed PDF URL from fallback videoId:', pdfUrl);
                             }
                           }
-                          console.log('Constructed PDF URL from summaryPdfUrl:', pdfUrl);
                         }
                         
                         if (!pdfUrl && !videoId) {
@@ -1058,13 +1239,13 @@ export default function Document() {
                           
                           return (
                             <>
-                              <div style={{ width: '100%', height: '800px', border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px' }}>
-                                <iframe
+                                <div style={{ width: '100%', height: '800px', border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px' }}>
+                                  <iframe
                                   src={pdfUrlWithAuth}
-                                  style={{ width: '100%', height: '100%', border: 'none' }}
-                                  title={`PDF viewer for ${selectedDocument?.name || 'document'}`}
-                                />
-                              </div>
+                                    style={{ width: '100%', height: '100%', border: 'none' }}
+                                    title={`PDF viewer for ${selectedDocument?.name || 'document'}`}
+                                  />
+                                </div>
                               <div className={styles.pdfActions} style={{ marginTop: '16px' }}>
                                 <a
                                   href={pdfUrl || '#'}
@@ -1124,26 +1305,54 @@ export default function Document() {
                             
                             if (documentData?.frames && Array.isArray(documentData.frames)) {
                               stepsData = documentData.frames.map((frame, index) => {
-                                // Extract meta_tags from GPT response dynamically
-                                let metaTags = ['frame', 'analysis']; // Default fallback
+                                // Extract meta_tags from GPT response dynamically - always use what GPT returns
+                                let metaTags = [];
                                 
-                                if (frame.gpt_response && frame.gpt_response.meta_tags) {
-                                  // Use meta_tags from GPT response if available
-                                  metaTags = Array.isArray(frame.gpt_response.meta_tags) 
-                                    ? frame.gpt_response.meta_tags 
-                                    : ['gpt', 'analysis'];
-                                } else if (frame.ocr_text) {
-                                  // Fallback to OCR tags if no GPT meta_tags
-                                  metaTags = ['ocr', 'text'];
-                                } else if (frame.gpt_response) {
-                                  // Has GPT response but no meta_tags
-                                  metaTags = ['gpt', 'analysis'];
+                                // First, check if meta_tags exists directly in gpt_response (primary source)
+                                if (frame.gpt_response && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null) {
+                                  // Use meta_tags directly from GPT response (even if empty array)
+                                  if (Array.isArray(frame.gpt_response.meta_tags)) {
+                                    metaTags = frame.gpt_response.meta_tags;
+                                  } else if (typeof frame.gpt_response.meta_tags === 'string') {
+                                    metaTags = [frame.gpt_response.meta_tags];
+                                  }
+                                }
+                                // Also check if meta_tags exists at top level of frame (fallback check)
+                                else if (frame.meta_tags !== undefined && frame.meta_tags !== null) {
+                                  if (Array.isArray(frame.meta_tags)) {
+                                    metaTags = frame.meta_tags;
+                                  } else if (typeof frame.meta_tags === 'string') {
+                                    metaTags = [frame.meta_tags];
+                                  }
+                                }
+                                
+                                // Only use fallback if GPT didn't provide meta_tags at all
+                                // If meta_tags is an empty array, that means GPT was called but returned no tags - keep it empty
+                                if (metaTags.length === 0) {
+                                  const hasGptResponse = frame.gpt_response !== undefined && frame.gpt_response !== null;
+                                  const hasMetaTagsInGpt = hasGptResponse && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null;
+                                  
+                                  // Only use fallback if GPT response doesn't exist OR meta_tags is truly missing (not empty array)
+                                  if (!hasGptResponse || !hasMetaTagsInGpt) {
+                                    // Fallback: use OCR or generic tags only if GPT didn't provide meta_tags
+                                    if (frame.ocr_text) {
+                                      metaTags = ['ocr', 'text'];
+                                    } else if (hasGptResponse) {
+                                      // GPT was called but no meta_tags field - use generic
+                                      metaTags = ['gpt', 'analysis'];
+                                    } else {
+                                      // No GPT response at all
+                                      metaTags = ['frame', 'analysis'];
+                                    }
+                                  }
+                                  // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
+                                  // that means GPT returned empty array - keep it empty (don't use fallback)
                                 }
                                 
                                 return {
-                                  id: frame.frame_id || index + 1,
-                                  timestamp: formatTimestamp(frame.timestamp),
-                                  description: frame.description || frame.ocr_text || 'Frame analysis',
+                                id: frame.frame_id || index + 1,
+                                timestamp: formatTimestamp(frame.timestamp),
+                                description: frame.description || frame.ocr_text || 'Frame analysis',
                                   metaTags: metaTags
                                 };
                               });
@@ -1181,6 +1390,63 @@ export default function Document() {
                           })()}
                         </tbody>
                       </table>
+                    </div>
+                  </section>
+                )}
+
+                {/* View Page Tab */}
+                {activeTab === 'viewpage' && (
+                  <section 
+                    id="viewpage-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="viewpage-tab"
+                  >
+                    <div className={styles.htmlContentContainer} role="region" aria-label="HTML content view">
+                      {(() => {
+                        // Get html_content from documentData
+                        const htmlContent = documentData?.html_content;
+                        
+                        // Debug logging
+                        console.log('[View Page Tab] documentData:', documentData);
+                        console.log('[View Page Tab] html_content:', htmlContent);
+                        console.log('[View Page Tab] html_content type:', typeof htmlContent);
+                        console.log('[View Page Tab] html_content length:', htmlContent?.length);
+                        
+                        if (htmlContent && htmlContent.trim().length > 0) {
+                          return (
+                            <div 
+                              className={styles.htmlContentDisplay}
+                              dangerouslySetInnerHTML={{ __html: htmlContent }}
+                              style={{
+                                width: '100%',
+                                minHeight: '600px',
+                                border: '1px solid #e0e0e0',
+                                borderRadius: '8px',
+                                padding: '20px',
+                                backgroundColor: '#ffffff',
+                                overflow: 'auto'
+                              }}
+                            />
+                          );
+                        } else {
+                          return (
+                            <div className={styles.emptyState}>
+                              <p>No HTML content available. The document may still be processing or HTML has not been generated yet.</p>
+                              {documentData && (
+                                <>
+                                  <p style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
+                                    Status: {documentData.video_metadata?.status || 'Unknown'}
+                                  </p>
+                                  <p style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
+                                    Debug: html_content is {htmlContent === null ? 'null' : htmlContent === undefined ? 'undefined' : `empty (length: ${htmlContent?.length || 0})`}
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          );
+                        }
+                      })()}
                     </div>
                   </section>
                 )}
