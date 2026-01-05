@@ -326,10 +326,20 @@ export default function Document() {
       console.log('Fetching fresh document data for video:', videoFileNumber);
       const data = await getDocument(videoFileNumber);
       console.log('Document data received:', data);
+      console.log('Document data frames:', data?.frames?.length || 0);
+      console.log('Document data transcript:', data?.transcript ? 'Present' : 'Missing');
+      console.log('Document data summaries:', data?.summaries?.length || 0);
       
       // Verify the data matches the requested video
       const dataVideoNumber = data?.video_file_number || data?.video_metadata?.video_file_number;
       if (data && dataVideoNumber === videoFileNumber) {
+        console.log('Setting document data:', {
+          hasFrames: !!data.frames,
+          framesCount: data.frames?.length || 0,
+          hasTranscript: !!data.transcript,
+          hasSummaries: !!data.summaries,
+          summariesCount: data.summaries?.length || 0
+        });
       setDocumentData(data || null);
       
       // Cache the data
@@ -405,7 +415,7 @@ export default function Document() {
                         }
                         // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
                         // that means GPT returned empty array - keep it empty (don't use fallback)
-                      }
+                  }
                   
                   return {
                     id: frame.frame_id || index + 1,
@@ -423,17 +433,24 @@ export default function Document() {
         // Data doesn't match requested video
         console.warn('Fetched data does not match requested video:', {
           requested: videoFileNumber,
-          received: dataVideoNumber
+          received: dataVideoNumber,
+          data: data
         });
         setDocumentData(null);
       }
     } catch (error) {
       console.error('Failed to fetch document:', error);
-      // Set empty data on error
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      // Set empty data on error but show a message
       setDocumentData(null);
+      // You might want to show a toast/notification here
     }
   }, []);
-  
+
   // Removed dummy data - using real data from API
 
   const handleRowClick = useCallback(async (document, forceRefresh = true) => {
@@ -470,6 +487,15 @@ export default function Document() {
   // Extract summaries from documentData when it loads (summaries are included in document response)
   useEffect(() => {
     if (documentData) {
+      console.log('[useEffect] documentData updated:', {
+        hasSummaries: !!documentData.summaries,
+        summariesType: typeof documentData.summaries,
+        summariesIsArray: Array.isArray(documentData.summaries),
+        summariesLength: documentData.summaries?.length || 0,
+        hasSummaryText: !!documentData.summary_text,
+        summaryTextLength: documentData.summary_text?.length || 0
+      });
+      
       // Set loading state based on whether documentData is still being fetched
       if (documentData.summaries !== undefined) {
         // Summaries field exists (could be array or null)
@@ -477,15 +503,38 @@ export default function Document() {
           console.log('[useEffect] Found summaries in documentData:', documentData.summaries.length);
           setSummaries(documentData.summaries);
         } else {
-          // Summaries is null or empty array
-          console.log('[useEffect] No summaries in documentData (null or empty)');
-          setSummaries([]);
+          // Summaries is null or empty array - check if summary_text exists
+          if (documentData.summary_text && documentData.summary_text.trim()) {
+            console.log('[useEffect] No summaries array but summary_text exists, creating summary object');
+            // Create a summary object from summary_text
+            setSummaries([{
+              batch_number: 1,
+              total_batches: 1,
+              summary_text: documentData.summary_text,
+              batch_start_frame: 1,
+              batch_end_frame: documentData.total_frames || 1
+            }]);
+          } else {
+            console.log('[useEffect] No summaries in documentData (null or empty)');
+            setSummaries([]);
+          }
         }
         setSummariesLoading(false);
       } else {
-        // Document data loaded but summaries field not present (shouldn't happen, but handle gracefully)
-        console.log('[useEffect] documentData loaded but summaries field not present');
-        setSummaries([]);
+        // Document data loaded but summaries field not present - check summary_text
+        if (documentData.summary_text && documentData.summary_text.trim()) {
+          console.log('[useEffect] summaries field not present but summary_text exists');
+          setSummaries([{
+            batch_number: 1,
+            total_batches: 1,
+            summary_text: documentData.summary_text,
+            batch_start_frame: 1,
+            batch_end_frame: documentData.total_frames || 1
+          }]);
+        } else {
+          console.log('[useEffect] documentData loaded but summaries field not present');
+          setSummaries([]);
+        }
         setSummariesLoading(false);
       }
     } else {
@@ -895,42 +944,6 @@ export default function Document() {
                   Transcribe
                 </button>
                 <button
-                  className={`${styles.tabButton} ${activeTab === 'voice' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('voice')}
-                  role="tab"
-                  aria-selected={activeTab === 'voice'}
-                  aria-controls="voice-panel"
-                >
-                  Voice Extraction
-                </button>
-                <button
-                  className={`${styles.tabButton} ${activeTab === 'summary' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('summary')}
-                  role="tab"
-                  aria-selected={activeTab === 'summary'}
-                  aria-controls="summary-panel"
-                >
-                  Summary
-                </button>
-                <button
-                  className={`${styles.tabButton} ${activeTab === 'audio' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('audio')}
-                  role="tab"
-                  aria-selected={activeTab === 'audio'}
-                  aria-controls="audio-panel"
-                >
-                  Audio
-                </button>
-                <button
-                  className={`${styles.tabButton} ${activeTab === 'pdf' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('pdf')}
-                  role="tab"
-                  aria-selected={activeTab === 'pdf'}
-                  aria-controls="pdf-panel"
-                >
-                  PDF
-                </button>
-                <button
                   className={`${styles.tabButton} ${activeTab === 'steps' ? styles.tabActive : ''}`}
                   onClick={() => setActiveTab('steps')}
                   role="tab"
@@ -940,13 +953,13 @@ export default function Document() {
                   Steps
                 </button>
                 <button
-                  className={`${styles.tabButton} ${activeTab === 'viewpage' ? styles.tabActive : ''}`}
-                  onClick={() => setActiveTab('viewpage')}
+                  className={`${styles.tabButton} ${activeTab === 'pdf' ? styles.tabActive : ''}`}
+                  onClick={() => setActiveTab('pdf')}
                   role="tab"
-                  aria-selected={activeTab === 'viewpage'}
-                  aria-controls="viewpage-panel"
+                  aria-selected={activeTab === 'pdf'}
+                  aria-controls="pdf-panel"
                 >
-                  View Page
+                  PDF
                 </button>
               </nav>
 
@@ -964,7 +977,15 @@ export default function Document() {
                         // Get transcript from documentData or selectedDocument
                         const transcript = documentData?.transcript || selectedDocument?.transcript;
                         
-                        if (transcript) {
+                        console.log('[Transcribe Tab] Transcript check:', {
+                          hasDocumentData: !!documentData,
+                          transcriptFromDocumentData: !!documentData?.transcript,
+                          transcriptFromSelected: !!selectedDocument?.transcript,
+                          transcriptLength: transcript?.length || 0
+                        });
+                        
+                        // If transcript exists (even if it's the default message), display it
+                        if (transcript && transcript.trim()) {
                           return (
                             <div className={styles.transcriptContainer}>
                               <h3 className={styles.transcriptTitle}>Transcription</h3>
@@ -976,187 +997,12 @@ export default function Document() {
                             </div>
                           );
                         } else {
+                          // If no transcript in DB, show default message
                           return (
-                            <div className={styles.emptyState}>
-                              No transcription data available. The video may still be processing.
-                            </div>
-                          );
-                        }
-                      })()}
-                    </div>
-                  </section>
-                )}
-
-                {/* Voice Extraction Tab */}
-                {activeTab === 'voice' && (
-                  <section 
-                    id="voice-panel"
-                    className={styles.tabPanel}
-                    role="tabpanel"
-                    aria-labelledby="voice-tab"
-                  >
-                    <div className={styles.voiceExtractionBox} role="region" aria-label="Voice extraction content">
-                      <p>
-                        {(() => {
-                          // Use documentData if available
-                          if (documentData?.frames && Array.isArray(documentData.frames)) {
-                            const voiceText = documentData.frames
-                              .map(f => f.description || f.ocr_text || '')
-                              .filter(Boolean)
-                              .join(' ');
-                            return voiceText || 'No voice extraction data available. The video may still be processing.';
-                          }
-                          return selectedDocument?.voiceExtraction || 'No voice extraction data available. The video may still be processing.';
-                        })()}
-                      </p>
-                    </div>
-                  </section>
-                )}
-
-                {/* Summary Tab */}
-                {activeTab === 'summary' && (
-                  <section 
-                    id="summary-panel"
-                    className={styles.tabPanel}
-                    role="tabpanel"
-                    aria-labelledby="summary-tab"
-                  >
-                    <div className={styles.summaryBox} role="region" aria-label="Document summary">
-                      {summariesLoading ? (
-                        <p>Loading summaries...</p>
-                      ) : summaries.length > 0 ? (
-                        <div>
-                          {summaries.map((summary, index) => (
-                            <div key={summary.id || index} style={{ marginBottom: '24px', padding: '16px', background: '#f5f5f5', borderRadius: '8px' }}>
-                              <h3 style={{ marginTop: 0, marginBottom: '12px', fontSize: '16px', fontWeight: '600' }}>
-                                Batch {summary.batch_number} of {summary.total_batches || summaries.length}
-                                {summary.batch_start_frame && summary.batch_end_frame && (
-                                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '8px' }}>
-                                    (Frames {summary.batch_start_frame}-{summary.batch_end_frame})
-                                  </span>
-                                )}
-                              </h3>
-                              <p style={{ margin: 0, lineHeight: '1.6', color: '#333' }}>{summary.summary_text}</p>
-                              {summary.created_at && (
-                                <p style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
-                                  Generated: {new Date(summary.created_at).toLocaleString()}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p>No summaries available. The video may still be processing or summaries have not been generated yet.</p>
-                      )}
-                    </div>
-                  </section>
-                )}
-
-                {/* Audio Tab */}
-                {activeTab === 'audio' && (
-                  <section 
-                    id="audio-panel"
-                    className={styles.tabPanel}
-                    role="tabpanel"
-                    aria-labelledby="audio-tab"
-                  >
-                    <div className={styles.audioContainer}>
-                      {(() => {
-                        // Get step progress from documentData or job status
-                        const stepProgress = documentData?.job_status?.step_progress || {};
-                        const extractAudioStatus = stepProgress.extract_audio || 'pending';
-                        
-                        // Get video file number for constructing audio URL
-                        const videoFileNumber = documentData?.video_metadata?.video_file_number || 
-                                                selectedDocument?.video_file_number;
-                        
-                        // Get audio URL - prioritize direct audio_url, then construct from video_file_number
-                        let audioUrl = documentData?.video_metadata?.audio_url || 
-                                      selectedDocument?.audioUrl;
-                        
-                        // If no direct audio_url, construct from video_file_number
-                        if (!audioUrl && videoFileNumber) {
-                          audioUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/file-number/${videoFileNumber}/audio`;
-                        }
-                        
-                        // If audio URL exists (either from DB or constructed), show audio player
-                        // This ensures audio is shown even if step_progress isn't updated yet
-                        if (audioUrl) {
-                          return (
-                            <>
-                              <div className={styles.audioStepStatus}>
-                                <div className={styles.stepStatusHeader}>
-                                  <div className={styles.stepStatusIcon}>
-                                    <svg className={styles.checkIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                                      <polyline points="20 6 9 17 4 12" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-                                    </svg>
-                                  </div>
-                                  <div className={styles.stepStatusInfo}>
-                                    <h3 className={styles.stepStatusTitle}>Audio Extraction Complete</h3>
-                                    <p className={styles.stepStatusDescription}>
-                                      Audio has been successfully extracted from the video.
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                              <audio
-                                controls
-                                className={styles.audioPlayer}
-                                aria-label={`Audio player for ${selectedDocument?.name || 'document'}`}
-                                preload="metadata"
-                              >
-                                <source src={audioUrl} type="audio/mpeg" />
-                                <source src={audioUrl} type="audio/mp3" />
-                                Your browser does not support the audio element.
-                              </audio>
-                              <div className={styles.audioInfo}>
-                                <a
-                                  href={audioUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className={styles.audioLink}
-                                  download={`audio_${videoFileNumber || 'video'}.mp3`}
-                                  aria-label={`Download audio file for ${selectedDocument?.name || 'document'}`}
-                                >
-                                  Download Audio
-                                </a>
-                              </div>
-                            </>
-                          );
-                        }
-                        
-                        // Show step status based on extraction progress
-                        if (extractAudioStatus === 'processing') {
-                          return (
-                            <div className={styles.audioStepStatus}>
-                              <div className={styles.stepStatusHeader}>
-                                <div className={styles.stepStatusIcon}>
-                                  <span className={styles.stepStatusSpinner}>🎵</span>
-                                </div>
-                                <div className={styles.stepStatusInfo}>
-                                  <h3 className={styles.stepStatusTitle}>Extracting Audio</h3>
-                                  <p className={styles.stepStatusDescription}>
-                                    Audio extraction is in progress. Please wait...
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        } else {
-                          return (
-                            <div className={styles.emptyState}>
-                              <div className={styles.audioStepStatus}>
-                                <div className={styles.stepStatusHeader}>
-                                  <div className={styles.stepStatusIcon}>
-                                    <span>⏳</span>
-                                  </div>
-                                  <div className={styles.stepStatusInfo}>
-                                    <h3 className={styles.stepStatusTitle}>Audio Extraction Pending</h3>
-                                    <p className={styles.stepStatusDescription}>
-                                      Audio extraction has not started yet. The video may still be processing.
-                                    </p>
-                                  </div>
-                                </div>
+                            <div className={styles.transcriptContainer}>
+                              <h3 className={styles.transcriptTitle}>Transcription</h3>
+                              <div className={styles.transcriptText}>
+                                <p>video doesn't have any voice</p>
                               </div>
                             </div>
                           );
@@ -1293,6 +1139,7 @@ export default function Document() {
                       <table className={styles.stepTable}>
                         <thead>
                           <tr>
+                            <th>Image</th>
                             <th>Timestamp</th>
                             <th>Description</th>
                             <th>Meta Tags</th>
@@ -1303,7 +1150,15 @@ export default function Document() {
                             // Use documentData if available, otherwise use selectedDocument
                             let stepsData = [];
                             
-                            if (documentData?.frames && Array.isArray(documentData.frames)) {
+                            console.log('[Steps Tab] Data check:', {
+                              hasDocumentData: !!documentData,
+                              framesCount: documentData?.frames?.length || 0,
+                              hasSelectedDocument: !!selectedDocument,
+                              selectedStepsCount: selectedDocument?.steps?.length || 0
+                            });
+                            
+                            if (documentData?.frames && Array.isArray(documentData.frames) && documentData.frames.length > 0) {
+                              // Ensure we process ALL frames, not just the last one
                               stepsData = documentData.frames.map((frame, index) => {
                                 // Extract meta_tags from GPT response dynamically - always use what GPT returns
                                 let metaTags = [];
@@ -1349,44 +1204,85 @@ export default function Document() {
                                   // that means GPT returned empty array - keep it empty (don't use fallback)
                                 }
                                 
+                                // Construct base64 image data URL
+                                let imageDataUrl = null;
+                                if (frame.base64_image) {
+                                  imageDataUrl = `data:image/jpeg;base64,${frame.base64_image}`;
+                                }
+                                
                                 return {
                                 id: frame.frame_id || index + 1,
                                 timestamp: formatTimestamp(frame.timestamp),
                                 description: frame.description || frame.ocr_text || 'Frame analysis',
-                                  metaTags: metaTags
+                                  metaTags: metaTags,
+                                  imageDataUrl: imageDataUrl
                                 };
                               });
                             } else if (selectedDocument?.steps && Array.isArray(selectedDocument.steps)) {
                               stepsData = selectedDocument.steps;
                             }
                             
-                            return stepsData && stepsData.length > 0 ? (
-                              stepsData.map((step, index) => (
-                                <tr key={step.id || index}>
-                                  <td className={styles.stepTimestamp}>{step.timestamp || '0:00'}</td>
-                                  <td className={styles.stepDescription}>{step.description || 'Frame analysis'}</td>
-                                  <td className={styles.stepMetaTags}>
-                                    <div className={styles.metaTagsContainer}>
-                                      {step.metaTags && Array.isArray(step.metaTags) && step.metaTags.length > 0 ? (
-                                        step.metaTags.map((tag, tagIndex) => (
-                                          <span key={tagIndex} className={styles.metaTag}>
-                                            {tag}
-                                          </span>
-                                        ))
-                                      ) : (
-                                        <span className={styles.metaTag}>frame</span>
-                                      )}
-                                    </div>
+                            if (!stepsData || stepsData.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan="4" className={styles.emptyState}>
+                                    <p>No step data available.</p>
+                                    <p style={{ fontSize: '0.9em', color: '#666', marginTop: '8px' }}>
+                                      {documentData ? 'The video processing may not have completed frame analysis yet.' : 'Loading document data...'}
+                                    </p>
                                   </td>
                                 </tr>
-                              ))
-                            ) : (
-                              <tr>
-                                <td colSpan="3" className={styles.emptyState}>
-                                  No frame analysis steps available. The video may still be processing.
+                              );
+                            }
+                            
+                            return stepsData.map((step, index) => (
+                              <tr key={`step-${step.id || index}-${step.timestamp || index}`}>
+                                <td className={styles.stepImage}>
+                                  {step.imageDataUrl ? (
+                                    <img 
+                                      src={step.imageDataUrl}
+                                      alt={`Frame at ${step.timestamp}`}
+                                      style={{
+                                        width: '150px',
+                                        height: 'auto',
+                                        maxHeight: '100px',
+                                        objectFit: 'contain',
+                                        borderRadius: '4px',
+                                        border: '1px solid #e0e0e0',
+                                        cursor: 'pointer'
+                                      }}
+                                      onClick={() => {
+                                        // Open image in new tab
+                                        const newWindow = window.open();
+                                        if (newWindow) {
+                                          newWindow.document.write(`<img src="${step.imageDataUrl}" style="max-width: 100%; height: auto;" />`);
+                                        }
+                                      }}
+                                      onError={(e) => {
+                                        e.target.style.display = 'none';
+                                      }}
+                                    />
+                                  ) : (
+                                    <span style={{ color: '#999', fontSize: '12px' }}>No image</span>
+                                  )}
+                                </td>
+                                <td className={styles.stepTimestamp}>{step.timestamp || '0:00'}</td>
+                                <td className={styles.stepDescription}>{step.description || 'Frame analysis'}</td>
+                                <td className={styles.stepMetaTags}>
+                                  <div className={styles.metaTagsContainer}>
+                                    {step.metaTags && Array.isArray(step.metaTags) && step.metaTags.length > 0 ? (
+                                      step.metaTags.map((tag, tagIndex) => (
+                                        <span key={tagIndex} className={styles.metaTag}>
+                                          {tag}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className={styles.metaTag}>frame</span>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
-                            );
+                            ));
                           })()}
                         </tbody>
                       </table>
@@ -1394,62 +1290,6 @@ export default function Document() {
                   </section>
                 )}
 
-                {/* View Page Tab */}
-                {activeTab === 'viewpage' && (
-                  <section 
-                    id="viewpage-panel"
-                    className={styles.tabPanel}
-                    role="tabpanel"
-                    aria-labelledby="viewpage-tab"
-                  >
-                    <div className={styles.htmlContentContainer} role="region" aria-label="HTML content view">
-                      {(() => {
-                        // Get html_content from documentData
-                        const htmlContent = documentData?.html_content;
-                        
-                        // Debug logging
-                        console.log('[View Page Tab] documentData:', documentData);
-                        console.log('[View Page Tab] html_content:', htmlContent);
-                        console.log('[View Page Tab] html_content type:', typeof htmlContent);
-                        console.log('[View Page Tab] html_content length:', htmlContent?.length);
-                        
-                        if (htmlContent && htmlContent.trim().length > 0) {
-                          return (
-                            <div 
-                              className={styles.htmlContentDisplay}
-                              dangerouslySetInnerHTML={{ __html: htmlContent }}
-                              style={{
-                                width: '100%',
-                                minHeight: '600px',
-                                border: '1px solid #e0e0e0',
-                                borderRadius: '8px',
-                                padding: '20px',
-                                backgroundColor: '#ffffff',
-                                overflow: 'auto'
-                              }}
-                            />
-                          );
-                        } else {
-                          return (
-                            <div className={styles.emptyState}>
-                              <p>No HTML content available. The document may still be processing or HTML has not been generated yet.</p>
-                              {documentData && (
-                                <>
-                                  <p style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
-                                    Status: {documentData.video_metadata?.status || 'Unknown'}
-                                  </p>
-                                  <p style={{ marginTop: '8px', fontSize: '12px', color: '#999' }}>
-                                    Debug: html_content is {htmlContent === null ? 'null' : htmlContent === undefined ? 'undefined' : `empty (length: ${htmlContent?.length || 0})`}
-                                  </p>
-                                </>
-                              )}
-                            </div>
-                          );
-                        }
-                      })()}
-                    </div>
-                  </section>
-                )}
               </article>
             </div>
           </div>
