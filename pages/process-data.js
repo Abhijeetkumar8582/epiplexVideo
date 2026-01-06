@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logVideoUpload } from '../lib/activityLogger';
-import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus, bulkDeleteUploads } from '../lib/api';
+import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus, bulkDeleteUploads, checkOpenAIKeyAvailability } from '../lib/api';
 import dataCache, { CACHE_DURATION } from '../lib/dataCache';
+import { getCurrentUser } from '../lib/auth';
 
 export default function ProcessData() {
   const router = useRouter();
@@ -27,9 +28,7 @@ export default function ProcessData() {
     { id: 2, label: 'Transcribe', number: '2' },
     { id: 3, label: 'Extract Keyframes', number: '3' },
     { id: 4, label: 'Analyze Frames', number: '4' },
-    { id: 5, label: 'Summary Generation', number: '5' },
-    { id: 6, label: 'PDF Generation', number: '6' },
-    { id: 7, label: 'Ready', number: '7' }
+    { id: 5, label: 'Ready', number: '5' }
   ];
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,6 +55,7 @@ export default function ProcessData() {
   const [currentJobId, setCurrentJobId] = useState(null);
   const [processingStatus, setProcessingStatus] = useState(null);
   const [statusPollingInterval, setStatusPollingInterval] = useState(null);
+  const backgroundRefreshIntervalRef = useRef(null);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -66,8 +66,13 @@ export default function ProcessData() {
   
   // Validation state
   const [nameError, setNameError] = useState(false);
+  const [openAIKeyError, setOpenAIKeyError] = useState(null);
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [transferProgress, setTransferProgress] = useState(0);
+  
+  // OpenAI key availability state
+  const [hasOpenAIKey, setHasOpenAIKey] = useState(null); // null = not checked yet, false = no key, true = has key
+  const [checkingOpenAIKey, setCheckingOpenAIKey] = useState(true);
   
   // Dropdown and status view state
   const [openDropdownId, setOpenDropdownId] = useState(null);
@@ -77,14 +82,56 @@ export default function ProcessData() {
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [selectAll, setSelectAll] = useState(false);
 
+  // Function to check OpenAI key availability (reusable)
+  const checkOpenAIKey = useCallback(async () => {
+    try {
+      console.log('[OpenAI Check] Starting check...');
+      setCheckingOpenAIKey(true);
+      const keyCheck = await checkOpenAIKeyAvailability();
+      const hasKey = Boolean(keyCheck?.has_key);
+      console.log('[OpenAI Check] Result:', { has_key: hasKey, fullResponse: keyCheck });
+      setHasOpenAIKey(hasKey);
+      if (!hasKey) {
+        const errorMsg = keyCheck?.message || "No OpenAI API key found. Please add your API key in Settings to process videos.";
+        setOpenAIKeyError(errorMsg);
+        console.log('[OpenAI Check] No key found, setting error message');
+      } else {
+        setOpenAIKeyError(null);
+        console.log('[OpenAI Check] Key found, clearing error');
+      }
+    } catch (error) {
+      console.error('[OpenAI Check] Error:', error);
+      // If check fails, assume no key to be safe
+      setHasOpenAIKey(false);
+      setOpenAIKeyError("Failed to verify OpenAI API key. Please try again or add your API key in Settings.");
+    } finally {
+      setCheckingOpenAIKey(false);
+      console.log('[OpenAI Check] Check completed');
+    }
+  }, []);
+
   useEffect(() => {
     // Log page view
     logPageView('Process Data');
+    
+    // Check OpenAI key availability on page load
+    checkOpenAIKey();
+    
     // Fetch videos from API on initial load
     fetchVideos(1);
     setIsInitialMount(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [checkOpenAIKey]);
+
+  // Re-check OpenAI key when window regains focus (user might have added key in another tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      checkOpenAIKey();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [checkOpenAIKey]);
 
   // Refetch when page changes (skip initial mount)
   useEffect(() => {
@@ -266,7 +313,7 @@ export default function ProcessData() {
         const stepProgress = status.step_progress || {};
         const currentStepName = status.current_step || 'upload';
         
-        // Map backend steps to frontend steps (0-6)
+        // Map backend steps to frontend steps (0-4)
         let stepIndex = 0;
         
         if (stepProgress.upload === 'completed') {
@@ -284,11 +331,8 @@ export default function ProcessData() {
         if (stepProgress.analyze_frames === 'processing' || stepProgress.analyze_frames === 'completed') {
           stepIndex = 3;
         }
-        if (stepProgress.complete === 'processing') {
+        if (stepProgress.complete === 'processing' || status.status === 'completed') {
           stepIndex = 4;
-        }
-        if (status.status === 'completed') {
-          stepIndex = 5;
         }
         
         setCurrentStep(stepIndex);
@@ -347,7 +391,15 @@ export default function ProcessData() {
     console.log('Edit item:', id);
   };
 
-  const handleCreateNew = () => {
+  const handleCreateNew = async () => {
+    // Re-check OpenAI key before opening dialog (in case it was just added)
+    await checkOpenAIKey();
+    
+    // If still no key, don't open dialog
+    if (!hasOpenAIKey) {
+      return; // Dialog won't open, error is already shown in notification
+    }
+    
     setDialogOpen(true);
   };
 
@@ -375,19 +427,8 @@ export default function ProcessData() {
     const file = e.dataTransfer.files[0];
     if (file) {
       setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
-      // Simulate upload
-      setIsUploading(true);
-      setUploadProgress(0);
-      const interval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setIsUploading(false);
-            return 100;
-          }
-          return prev + 10;
-        });
-      }, 200);
+      // Start actual upload immediately
+      handleFileUpload(file);
     }
   };
 
@@ -395,18 +436,30 @@ export default function ProcessData() {
     const file = e.target.files[0];
     if (file) {
       setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
-      setIsUploading(true);
+      // Start actual upload immediately
+      handleFileUpload(file);
+    }
+  };
+
+  const handleFileUpload = async (file) => {
+    setIsUploading(true);
+    setUploadProgress(0);
+    
+    try {
+      // Upload file immediately when selected
+      await uploadVideo(file, (progress) => {
+        setUploadProgress(progress);
+      });
+      
+      // Upload complete - ensure button is enabled
+      setUploadProgress(100);
+      setIsUploading(false);
+    } catch (error) {
+      console.error('File upload failed:', error);
+      setIsUploading(false);
       setUploadProgress(0);
-      const interval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setIsUploading(false);
-            return 100;
-          }
-          return prev + 10;
-        });
-      }, 200);
+      // Show error but don't remove file - user can retry
+      alert('File upload failed. Please try again or select a different file.');
     }
   };
 
@@ -425,6 +478,10 @@ export default function ProcessData() {
   };
 
   const handleStart = async () => {
+    // Clear previous errors
+    setOpenAIKeyError(null);
+    setNameError(false);
+    
     // Validate name field
     if (!formData.name || formData.name.trim() === '') {
       setNameError(true);
@@ -435,10 +492,51 @@ export default function ProcessData() {
       return;
     }
 
+    // Check if OpenAI API key is available BEFORE starting upload
+    // This must happen before any file upload begins
+    // IMPORTANT: Keep dialog open if validation fails
+    try {
+      const keyCheck = await checkOpenAIKeyAvailability();
+      if (!keyCheck.has_key) {
+        const errorMessage = keyCheck.message || "No OpenAI API key found. Please add your API key in Settings to process videos.";
+        setOpenAIKeyError(errorMessage);
+        setDialogOpen(true); // Keep dialog open to show error
+        // Scroll to error message to make it visible
+        setTimeout(() => {
+          const errorElement = document.querySelector(`[data-openai-error]`);
+          if (errorElement) {
+            errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+        return; // Block upload completely - do NOT proceed
+      }
+      // Clear any previous errors if key is available
+      setOpenAIKeyError(null);
+    } catch (error) {
+      console.error('Failed to check OpenAI key:', error);
+      const errorMessage = "Failed to verify OpenAI API key. Please try again or add your API key in Settings.";
+      setOpenAIKeyError(errorMessage);
+      setDialogOpen(true); // Keep dialog open to show error
+      // Scroll to error message
+      setTimeout(() => {
+        const errorElement = document.querySelector(`[data-openai-error]`);
+        if (errorElement) {
+          errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+      return; // Block upload completely - do NOT proceed
+    }
+
     // If file is selected, upload it
     if (formData.file) {
       try {
-        // Show transfer dialog
+        // IMPORTANT: Do NOT show transfer dialog or start upload until validation passes
+        // The OpenAI key check above must complete successfully first
+        
+        setIsUploading(true);
+        setUploadProgress(0);
+        
+        // Show transfer dialog only after validation passes
         setShowTransferDialog(true);
         setTransferProgress(0);
         setDialogOpen(false);
@@ -453,9 +551,6 @@ export default function ProcessData() {
             return prev + 10;
           });
         }, 200);
-        
-        setIsUploading(true);
-        setUploadProgress(0);
         
         const response = await uploadVideo(formData.file, (progress) => {
           setUploadProgress(progress);
@@ -472,11 +567,6 @@ export default function ProcessData() {
         // Complete transfer progress
         setTransferProgress(100);
         clearInterval(progressInterval);
-        
-        // Wait a moment to show completion, then close transfer dialog
-        setTimeout(() => {
-          setShowTransferDialog(false);
-        }, 1000);
         
         // Log video upload
         if (response.data && response.data.id) {
@@ -497,21 +587,44 @@ export default function ProcessData() {
         // Refresh the list to show the new entry
         await fetchVideos();
         
+        // Close transfer dialog and open processing dialog immediately
+        setShowTransferDialog(false);
         setNewEntryId(entryId);
         setCurrentJobId(jobId);
         setProcessingOpen(true);
         setCurrentStep(0);
         setFormData({ name: '', link: '', file: null, fileUrl: '' });
         setIsUploading(false);
+        setUploadProgress(0);
+        setTransferProgress(0);
         setNameError(false);
+        
+        // Initialize processing status immediately
+        setProcessingStatus({
+          status: 'processing',
+          message: 'Video uploaded successfully. Processing has started...',
+          current_step: 'upload',
+          step_progress: { upload: 'completed' },
+          progress: 0
+        });
         
         // Start polling for status if job_id is available
         if (jobId) {
-          startStatusPolling(jobId);
+          // Small delay to ensure UI updates before starting polling
+          setTimeout(() => {
+            startStatusPolling(jobId);
+          }, 500);
+        } else {
+          // If no jobId, still show processing dialog but with a message
+          console.warn('No job_id returned from upload. Processing may not be tracked.');
         }
       } catch (error) {
         console.error('Upload failed:', error);
         setShowTransferDialog(false);
+        setIsUploading(false);
+        setUploadProgress(0);
+        setTransferProgress(0);
+        
         // Show detailed error message
         let errorMessage = 'Failed to upload video. Please try again.';
         if (error.response) {
@@ -522,7 +635,22 @@ export default function ProcessData() {
           } else if (error.response.status === 413) {
             errorMessage = 'File is too large. Please choose a smaller file.';
           } else if (error.response.status === 400) {
-            errorMessage = error.response.data?.detail || 'Invalid file. Please check the file format and try again.';
+            // Check if it's an OpenAI key error
+            const detail = error.response.data?.detail || '';
+            if (detail.toLowerCase().includes('openai') || detail.toLowerCase().includes('api key')) {
+              // This is an OpenAI key error - show it in the dialog
+              setOpenAIKeyError(errorMessage);
+              setDialogOpen(true); // Reopen dialog to show error
+              // Scroll to error message
+              setTimeout(() => {
+                const errorElement = document.querySelector(`[data-openai-error]`);
+                if (errorElement) {
+                  errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }, 100);
+              return; // Don't show alert, error is already displayed
+            }
+            errorMessage = detail || 'Invalid file. Please check the file format and try again.';
           }
         } else if (error.request) {
           // Request was made but no response received
@@ -531,9 +659,6 @@ export default function ProcessData() {
           errorMessage = error.message;
         }
         alert(errorMessage);
-        setIsUploading(false);
-        setUploadProgress(0);
-        setTransferProgress(0);
       }
     } else {
       // For URL or link-based uploads, create entry without file
@@ -567,12 +692,23 @@ export default function ProcessData() {
 
   // Poll job status when processing is open
   const startStatusPolling = (jobId) => {
-    if (!jobId) return;
+    if (!jobId) {
+      console.warn('Cannot start status polling: no jobId provided');
+      return;
+    }
+    
+    // Clear any existing polling interval
+    if (statusPollingInterval) {
+      clearInterval(statusPollingInterval);
+      setStatusPollingInterval(null);
+    }
     
     const pollStatus = async () => {
       try {
         const status = await getStatus(jobId);
-        setProcessingStatus(status);
+        if (status) {
+          setProcessingStatus(status);
+        }
         
         // Update current step based on status
         if (status) {
@@ -608,23 +744,9 @@ export default function ProcessData() {
             stepIndex = 3;
           }
           
-          // Step 5: Summary Generation
-          if (stepProgress.summary_generation === 'processing' || stepProgress.analyze_important_frames === 'processing') {
-            stepIndex = 4;
-          } else if (stepProgress.summary_generation === 'completed' && stepProgress.generate_pdf !== 'completed') {
-            stepIndex = 4;
-          }
-          
-          // Step 6: PDF Generation
-          if (stepProgress.generate_pdf === 'processing') {
-            stepIndex = 5;
-          } else if (stepProgress.generate_pdf === 'completed' && status.status !== 'completed') {
-            stepIndex = 5;
-          }
-          
-          // Step 7: Ready (completed)
+          // Step 5: Ready (completed)
           if (status.status === 'completed') {
-            stepIndex = 6;
+            stepIndex = 4;
           }
           
           setCurrentStep(stepIndex);
@@ -643,8 +765,10 @@ export default function ProcessData() {
               setProcessingStatus(null);
               setCurrentJobId(null);
               
+              // Always refresh the list to show updated status
+              await fetchVideos();
+              
               if (newEntryId) {
-                await fetchVideos();
                 setNewEntryId(null);
               }
             }, 2000);
@@ -673,6 +797,10 @@ export default function ProcessData() {
       if (statusPollingInterval) {
         clearInterval(statusPollingInterval);
       }
+      if (backgroundRefreshIntervalRef.current) {
+        clearInterval(backgroundRefreshIntervalRef.current);
+        backgroundRefreshIntervalRef.current = null;
+      }
     };
   }, [statusPollingInterval]);
   
@@ -685,6 +813,38 @@ export default function ProcessData() {
       setCurrentJobId(null);
     }
   }, [processingOpen, statusPollingInterval]);
+
+  // Background refresh: automatically refresh list if there are items with "Processing" status
+  useEffect(() => {
+    // Check if there are any processing items
+    const hasProcessingItems = tableData.some(item => 
+      item.status === 'processing' || item.status === 'uploaded'
+    );
+
+    // Clear any existing interval first
+    if (backgroundRefreshIntervalRef.current) {
+      clearInterval(backgroundRefreshIntervalRef.current);
+      backgroundRefreshIntervalRef.current = null;
+    }
+
+    if (hasProcessingItems) {
+      // Set up background refresh every 10 seconds
+      const interval = setInterval(async () => {
+        // Invalidate cache to get fresh data
+        dataCache.clearByPattern('process-data:videos:');
+        await fetchVideos(currentPage);
+      }, 10000); // Refresh every 10 seconds
+
+      backgroundRefreshIntervalRef.current = interval;
+
+      return () => {
+        if (backgroundRefreshIntervalRef.current) {
+          clearInterval(backgroundRefreshIntervalRef.current);
+          backgroundRefreshIntervalRef.current = null;
+        }
+      };
+    }
+  }, [tableData, currentPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -715,6 +875,10 @@ export default function ProcessData() {
     // Clear error when user starts typing
     if (name === 'name' && nameError) {
       setNameError(false);
+    }
+    // Clear OpenAI key error when user makes changes
+    if (openAIKeyError) {
+      setOpenAIKeyError(null);
     }
   };
 
@@ -918,11 +1082,69 @@ export default function ProcessData() {
       />
       <div className={`${styles.dashboard} ${processingOpen ? styles.blurred : ''}`}>
         <Layout>
+          {/* OpenAI Key Missing Notification */}
+          {(() => {
+            const shouldShow = !checkingOpenAIKey && hasOpenAIKey === false;
+            if (shouldShow) {
+              console.log('[Notification] Rendering notification banner');
+            }
+            return shouldShow;
+          })() && (
+            <div 
+              style={{
+                backgroundColor: '#fef3c7',
+                border: '1px solid #fbbf24',
+                borderRadius: '8px',
+                padding: '12px 16px',
+                marginBottom: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" style={{ flexShrink: 0 }}>
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <div style={{ flex: 1, fontSize: '14px', color: '#92400e' }}>
+                <strong>OpenAI API Key Required:</strong> Please configure your OpenAI API key in the Settings tab to upload and process videos.
+              </div>
+              <button
+                onClick={() => router.push('/settings')}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#f59e0b',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                Go to Settings
+              </button>
+            </div>
+          )}
+          
           {/* Top Header */}
           <div className={styles.processDataHeader}>
             <h1 className={styles.processDataTitle}>Process Data</h1>
             <div className={styles.headerRight}>
-              <button className={styles.createButton} onClick={handleCreateNew}>
+              <button 
+                className={styles.createButton} 
+                onClick={handleCreateNew}
+                disabled={checkingOpenAIKey || hasOpenAIKey === false}
+                style={{
+                  opacity: (checkingOpenAIKey || hasOpenAIKey === false) ? 0.5 : 1,
+                  cursor: (checkingOpenAIKey || hasOpenAIKey === false) ? 'not-allowed' : 'pointer',
+                  pointerEvents: (checkingOpenAIKey || hasOpenAIKey === false) ? 'none' : 'auto'
+                }}
+                title={hasOpenAIKey === false ? 'Please configure OpenAI API key in Settings to create new uploads' : ''}
+              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="12" y1="5" x2="12" y2="19"></line>
                   <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -1406,6 +1628,73 @@ export default function ProcessData() {
                   {nameError && (
                     <div className={styles.errorMessage}>Name is required</div>
                   )}
+                  {openAIKeyError && (
+                    <div 
+                      data-openai-error
+                      className={styles.errorMessage} 
+                      style={{
+                        marginTop: '12px',
+                        marginBottom: '12px',
+                        padding: '16px',
+                        backgroundColor: '#fef2f2',
+                        border: '2px solid #fecaca',
+                        borderRadius: '8px',
+                        color: '#991b1b',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
+                      }}
+                    >
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: '2px' }}>
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                      </svg>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '700', marginBottom: '8px', fontSize: '16px' }}>
+                          OpenAI API Key Required
+                        </div>
+                        <div style={{ fontSize: '14px', marginBottom: '12px', lineHeight: '1.5' }}>
+                          {openAIKeyError}
+                        </div>
+                        <div style={{ 
+                          padding: '12px', 
+                          backgroundColor: '#fff', 
+                          borderRadius: '6px',
+                          border: '1px solid #fecaca',
+                          marginBottom: '8px'
+                        }}>
+                          <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#7f1d1d' }}>
+                            To upload and process videos:
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#991b1b', lineHeight: '1.6' }}>
+                            1. Go to Settings page<br/>
+                            2. Find the "OpenAI API Key" section<br/>
+                            3. Enter your OpenAI API key (starts with sk-)<br/>
+                            4. Click "Save" to store your key
+                          </div>
+                        </div>
+                        <a 
+                          href="/settings" 
+                          onClick={(e) => { e.preventDefault(); router.push('/settings'); }} 
+                          style={{ 
+                            display: 'inline-block',
+                            padding: '8px 16px',
+                            backgroundColor: '#991b1b',
+                            color: '#fff',
+                            textDecoration: 'none',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            marginTop: '8px'
+                          }}
+                        >
+                          Go to Settings to Add API Key →
+                        </a>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* File Upload Area - Hide when URL is entered */}
@@ -1508,8 +1797,16 @@ export default function ProcessData() {
                   <button className={styles.cancelButton} onClick={handleCancel}>
                     Cancel
                   </button>
-                  <button className={styles.startButton} onClick={handleStart}>
-                    Save
+                  <button 
+                    className={styles.startButton} 
+                    onClick={handleStart}
+                    disabled={isUploading || (uploadProgress > 0 && uploadProgress < 100) || !formData.file}
+                    style={{
+                      opacity: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || !formData.file) ? 0.5 : 1,
+                      cursor: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || !formData.file) ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {isUploading && uploadProgress < 100 ? `Uploading... ${uploadProgress}%` : 'Save'}
                   </button>
                 </div>
               </div>
@@ -1523,17 +1820,35 @@ export default function ProcessData() {
             <div className={styles.processingContainer}>
               <h2 className={styles.processingTitle}>Processing Video Extraction</h2>
               
-              {/* Show progress percentage if available */}
-              {processingStatus && processingStatus.progress !== undefined && (
+              {/* Show status message */}
+              {processingStatus && processingStatus.message && (
                 <div style={{ marginBottom: '20px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '18px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
-                    {processingStatus.progress}%
+                  <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: processingStatus.progress !== undefined ? '8px' : '0' }}>
+                    {processingStatus.message}
                   </div>
-                  {processingStatus.message && (
-                    <div style={{ fontSize: '14px', color: '#6b7280' }}>
-                      {processingStatus.message}
+                  {processingStatus.progress !== undefined && (
+                    <div style={{ fontSize: '18px', fontWeight: '600', color: '#374151' }}>
+                      {processingStatus.progress}%
                     </div>
                   )}
+                </div>
+              )}
+              
+              {/* Show progress percentage if available but no message */}
+              {processingStatus && processingStatus.progress !== undefined && !processingStatus.message && (
+                <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '18px', fontWeight: '600', color: '#374151' }}>
+                    {processingStatus.progress}%
+                  </div>
+                </div>
+              )}
+              
+              {/* Show default message if no status yet */}
+              {!processingStatus && (
+                <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                    Initializing processing...
+                  </div>
                 </div>
               )}
               

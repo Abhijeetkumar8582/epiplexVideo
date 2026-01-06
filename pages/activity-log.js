@@ -40,6 +40,8 @@ export default function ActivityLog() {
       }
     } catch (error) {
       console.error('Failed to fetch activity actions:', error);
+      // Don't show error for actions - it's not critical, just set empty array
+      setAvailableActions([]);
     }
   }, []);
 
@@ -97,8 +99,37 @@ export default function ActivityLog() {
       }
     } catch (err) {
       console.error('Failed to fetch activity logs:', err);
-      console.error('Error details:', err.response?.data || err.message);
-      setError(`Failed to load activity logs: ${err.response?.data?.detail || err.message || 'Unknown error'}`);
+      console.error('Error details:', {
+        message: err.message,
+        code: err.code,
+        response: err.response?.data,
+        status: err.response?.status,
+        config: err.config
+      });
+      
+      // Better error message handling
+      let errorMessage = 'Failed to load activity logs';
+      
+      if (err.networkError || err.code === 'ECONNABORTED' || err.code === 'ERR_NETWORK' || err.code === 'ECONNREFUSED' || err.message === 'Network Error' || err.message.includes('Network')) {
+        errorMessage = err.enhancedMessage || 'Network Error: Unable to connect to the server. Please check your internet connection and ensure the backend server is running.';
+      } else if (err.response) {
+        // Server responded with error status
+        if (err.response.status === 401) {
+          errorMessage = 'Authentication required. Please sign in again.';
+        } else if (err.response.status === 403) {
+          errorMessage = 'Access denied. You do not have permission to view activity logs.';
+        } else if (err.response.status === 404) {
+          errorMessage = 'Activity logs endpoint not found. Please check the API configuration.';
+        } else if (err.response.status >= 500) {
+          errorMessage = 'Server error. Please try again later or contact support.';
+        } else {
+          errorMessage = err.response.data?.detail || err.response.data?.message || `Error ${err.response.status}: ${err.response.statusText}`;
+        }
+      } else if (err.message) {
+        errorMessage = `${errorMessage}: ${err.message}`;
+      }
+      
+      setError(errorMessage);
       setLogs([]);
       setTotalRecords(0);
       setTotalPages(1);
@@ -406,9 +437,38 @@ export default function ActivityLog() {
       'VIEW_DOCUMENT': '#8b5cf6',
       'DELETE_VIDEO': '#f59e0b',
       'BULK_DELETE_VIDEO': '#f59e0b',
-      'PAGE_VIEW': '#6b7280'
+      'PAGE_VIEW': '#6b7280',
+      'API_REQUEST': '#6366f1',
+      'API_CALL': '#6366f1'
     };
     return actionColors[action] || '#6b7280';
+  };
+
+  const getMethodColor = (method) => {
+    const methodColors = {
+      'GET': '#10b981',
+      'POST': '#3b82f6',
+      'PUT': '#f59e0b',
+      'PATCH': '#8b5cf6',
+      'DELETE': '#ef4444'
+    };
+    return methodColors[method] || '#6b7280';
+  };
+
+  const getStatusColor = (statusCode) => {
+    if (statusCode >= 200 && statusCode < 300) return '#10b981'; // Green for 2xx
+    if (statusCode >= 400 && statusCode < 500) return '#f59e0b'; // Yellow for 4xx
+    if (statusCode >= 500) return '#ef4444'; // Red for 5xx
+    return '#6b7280'; // Gray for others
+  };
+
+  const copyToClipboard = (text) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => {
+        // Could show a toast notification here
+        console.log('Copied to clipboard:', text);
+      });
+    }
   };
 
   const getUserInitials = (description) => {
@@ -624,15 +684,155 @@ export default function ActivityLog() {
         {/* Timeline View */}
         {loading ? (
           <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
+            <div style={{ marginBottom: '12px' }}>
+              <svg 
+                width="48" 
+                height="48" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2"
+                style={{ 
+                  animation: 'spin 1s linear infinite',
+                  display: 'inline-block'
+                }}
+              >
+                <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" opacity="0.75"></path>
+              </svg>
+            </div>
             Loading activity logs...
           </div>
         ) : error ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#ef4444' }}>
-            {error}
+          <div style={{ 
+            padding: '40px', 
+            textAlign: 'center',
+            maxWidth: '600px',
+            margin: '0 auto'
+          }}>
+            <div style={{
+              padding: '24px',
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: '8px',
+              color: '#991b1b'
+            }}>
+              <div style={{ 
+                fontSize: '48px', 
+                marginBottom: '16px' 
+              }}>
+                ⚠️
+              </div>
+              <h3 style={{ 
+                fontSize: '18px', 
+                fontWeight: '600', 
+                marginBottom: '12px',
+                color: '#991b1b'
+              }}>
+                Unable to Load Activity Logs
+              </h3>
+              <p style={{ 
+                fontSize: '14px', 
+                color: '#7f1d1d',
+                marginBottom: '20px',
+                lineHeight: '1.6'
+              }}>
+                {error}
+              </p>
+              <button
+                onClick={() => {
+                  setError(null);
+                  fetchLogs();
+                }}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#dc2626',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
+              >
+                Retry
+              </button>
+            </div>
           </div>
         ) : groupedLogs.length === 0 ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
-            No activity logs found
+          <div style={{ 
+            padding: '40px', 
+            textAlign: 'center',
+            maxWidth: '500px',
+            margin: '0 auto'
+          }}>
+            <div style={{
+              padding: '32px',
+              backgroundColor: '#f9fafb',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px'
+            }}>
+              <div style={{ 
+                fontSize: '48px', 
+                marginBottom: '16px' 
+              }}>
+                📝
+              </div>
+              <h3 style={{ 
+                fontSize: '18px', 
+                fontWeight: '600', 
+                marginBottom: '8px',
+                color: '#111827'
+              }}>
+                No Activity Logs Found
+              </h3>
+              <p style={{ 
+                fontSize: '14px', 
+                color: '#6b7280',
+                lineHeight: '1.6'
+              }}>
+                {searchQuery || selectedAction || startDate || endDate
+                  ? 'No activity logs match your current filters. Try adjusting your search criteria.'
+                  : 'You haven\'t performed any activities yet. Activity logs will appear here as you use the application.'}
+              </p>
+              {(searchQuery || selectedAction || startDate || endDate) && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedAction('');
+                    setStartDate('');
+                    setEndDate('');
+                    setSelectedDate(null);
+                    setCurrentPage(1);
+                  }}
+                  style={{
+                    marginTop: '16px',
+                    padding: '8px 16px',
+                    backgroundColor: '#ffffff',
+                    color: '#374151',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f3f4f6';
+                    e.currentTarget.style.borderColor = '#9ca3af';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#ffffff';
+                    e.currentTarget.style.borderColor = '#d1d5db';
+                  }}
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ position: 'relative' }}>
@@ -762,10 +962,92 @@ export default function ActivityLog() {
                             color: '#374151',
                             lineHeight: '1.5'
                           }}>
-                            <span style={{ fontWeight: '500' }}>
-                              {log.action?.replace(/_/g, ' ')}:
-                            </span>{' '}
-                            {log.description || 'No description available'}
+                            {/* Special rendering for API_REQUEST logs */}
+                            {(log.action === 'API_REQUEST' || log.action === 'API_CALL') && log.metadata ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  {/* HTTP Method Badge */}
+                                  {log.metadata.method && (
+                                    <span style={{
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: '700',
+                                      textTransform: 'uppercase',
+                                      background: getMethodColor(log.metadata.method),
+                                      color: '#ffffff',
+                                      fontFamily: 'monospace'
+                                    }}>
+                                      {log.metadata.method}
+                                    </span>
+                                  )}
+                                  
+                                  {/* Endpoint Path */}
+                                  <span style={{
+                                    fontSize: '13px',
+                                    fontFamily: 'monospace',
+                                    color: '#374151',
+                                    fontWeight: '500'
+                                  }}>
+                                    {log.metadata.path || 'N/A'}
+                                  </span>
+                                  
+                                  {/* Status Code Badge */}
+                                  {log.metadata.status_code && (
+                                    <span style={{
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: '600',
+                                      background: getStatusColor(log.metadata.status_code) + '20',
+                                      color: getStatusColor(log.metadata.status_code),
+                                      border: `1px solid ${getStatusColor(log.metadata.status_code)}40`
+                                    }}>
+                                      {log.metadata.status_code}
+                                    </span>
+                                  )}
+                                  
+                                  {/* Response Time */}
+                                  {log.metadata.response_time_ms !== undefined && (
+                                    <span style={{
+                                      fontSize: '12px',
+                                      color: log.metadata.is_slow ? '#ef4444' : '#6b7280',
+                                      fontWeight: log.metadata.is_slow ? '600' : '400'
+                                    }}>
+                                      {Math.round(log.metadata.response_time_ms)}ms
+                                      {log.metadata.is_slow && ' ⚠️ Slow'}
+                                    </span>
+                                  )}
+                                </div>
+                                
+                                {/* Request ID (copyable) */}
+                                {log.metadata.request_id && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '11px', color: '#9ca3af' }}>Request ID:</span>
+                                    <code style={{
+                                      fontSize: '11px',
+                                      fontFamily: 'monospace',
+                                      color: '#6366f1',
+                                      background: '#f3f4f6',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={() => copyToClipboard(log.metadata.request_id)}
+                                    title="Click to copy">
+                                      {log.metadata.request_id}
+                                    </code>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <>
+                                <span style={{ fontWeight: '500' }}>
+                                  {log.action?.replace(/_/g, ' ')}:
+                                </span>{' '}
+                                {log.description || 'No description available'}
+                              </>
+                            )}
                           </div>
 
                           {/* Metadata Row */}
@@ -871,6 +1153,16 @@ export default function ActivityLog() {
           </div>
         )}
       </div>
+      <style jsx>{`
+        @keyframes spin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
     </Layout>
   );
 }

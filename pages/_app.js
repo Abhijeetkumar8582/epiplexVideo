@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { logPageView } from '../lib/activityLogger'
 import { isAuthenticated, requiresAuth } from '../lib/auth'
+import { LoadingProvider } from '../lib/loadingState'
 
 export default function App({ Component, pageProps }) {
   const router = useRouter()
@@ -87,7 +88,9 @@ export default function App({ Component, pageProps }) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
       </Head>
       <ErrorBoundary>
-        <Component {...pageProps} />
+        <LoadingProvider>
+          <Component {...pageProps} />
+        </LoadingProvider>
       </ErrorBoundary>
     </>
   )

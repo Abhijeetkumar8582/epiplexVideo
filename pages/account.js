@@ -9,35 +9,9 @@ import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 export default function Account() {
   const [isEditMode, setIsEditMode] = useState(false);
   
-  const initialFormData = {
-    // Personal Details
-    fullName: 'Samuel Wilson',
-    dateOfBirth: 'January 1, 1987',
-    gender: 'Male',
-    nationality: 'American',
-    address: 'California - United States',
-    phoneNumber: '(213) 555-1234',
-    email: 'wilson@example.com',
-    // Security Settings
-    twoFactorAuth: 'Enabled',
-    securityQuestionsSet: 'Yes',
-    loginNotifications: 'Enabled',
-    // Account Details
-    displayName: 's_wilson_168920',
-    membershipStatus: 'Premium Member',
-    languagePreference: 'English',
-    timeZone: 'GMT-5 (Eastern Time)',
-    // Preferences
-    emailNotifications: 'Subscribed',
-    smsAlerts: 'Enabled',
-    contentPreferences: 'Technology, Design, Innovation',
-    defaultDashboardView: 'Compact Mode',
-    darkMode: 'Activated',
-    languageForContent: 'English'
-  };
-
-  const [formData, setFormData] = useState(initialFormData);
+  const [formData, setFormData] = useState(null);
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Log page view
@@ -47,25 +21,74 @@ export default function Account() {
     fetchUserData();
   }, []);
 
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } catch (error) {
+      return dateString;
+    }
+  };
+
+  const formatDateTime = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (error) {
+      return dateString;
+    }
+  };
+
+  const initializeFormData = (userData) => {
+    if (!userData) return;
+    
+    const initialData = {
+      // Personal Details
+      fullName: userData.full_name || 'N/A',
+      email: userData.email || 'N/A',
+      // Account Details
+      role: userData.role ? userData.role.charAt(0).toUpperCase() + userData.role.slice(1) : 'User',
+      accountStatus: userData.is_active ? 'Active' : 'Inactive',
+      accountCreated: formatDate(userData.created_at),
+      lastLogin: userData.last_login_at ? formatDateTime(userData.last_login_at) : 'Never',
+      lastUpdated: formatDate(userData.updated_at),
+      // Additional info
+      userId: userData.id || 'N/A',
+      hasOpenAIKey: userData.openai_api_key !== null ? 'Configured' : 'Not Configured',
+      hasCustomPrompt: userData.frame_analysis_prompt ? 'Yes' : 'No'
+    };
+    
+    setFormData(initialData);
+  };
+
   const fetchUserData = async () => {
     const CACHE_KEY = 'account:userData';
     
-    // Check cache first
-    const cachedData = dataCache.get(CACHE_KEY);
-    if (cachedData) {
-      setUser(cachedData);
-      // Update form data with cached user data
-      if (cachedData) {
-        setFormData(prev => ({
-          ...prev,
-          fullName: cachedData.full_name || prev.fullName,
-          email: cachedData.email || prev.email
-        }));
-      }
-      return;
-    }
-
     try {
+      setLoading(true);
+      
+      // Check cache first
+      const cachedData = dataCache.get(CACHE_KEY);
+      if (cachedData) {
+        setUser(cachedData);
+        initializeFormData(cachedData);
+        setLoading(false);
+        return;
+      }
+
       const userData = await getCurrentUser();
       setUser(userData);
       
@@ -74,16 +97,12 @@ export default function Account() {
         dataCache.set(CACHE_KEY, userData, CACHE_DURATION.USER_DATA);
       }
       
-      // Update form data with user data if available
-      if (userData) {
-        setFormData(prev => ({
-          ...prev,
-          fullName: userData.full_name || prev.fullName,
-          email: userData.email || prev.email
-        }));
-      }
+      // Initialize form data with real user data
+      initializeFormData(userData);
     } catch (error) {
       console.error('Failed to fetch user data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -106,7 +125,9 @@ export default function Account() {
   };
 
   const handleCancel = () => {
-    setFormData(initialFormData);
+    if (user) {
+      initializeFormData(user);
+    }
     setIsEditMode(false);
   };
 
@@ -217,175 +238,132 @@ export default function Account() {
             </div>
 
             {/* Profile Header */}
-            <div className={styles.profileHeader}>
-              <div className={styles.profileAvatar}>
-                <div className={styles.avatarPlaceholder}>
-                  <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                    <circle cx="12" cy="7" r="4"></circle>
-                  </svg>
+            {loading ? (
+              <div style={{ padding: '40px', textAlign: 'center' }}>
+                <div>Loading account information...</div>
+              </div>
+            ) : user && formData ? (
+              <div className={styles.profileHeader}>
+                <div className={styles.profileAvatar}>
+                  <div className={styles.avatarPlaceholder} style={{
+                    backgroundColor: '#3b82f6',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '32px',
+                    fontWeight: '600'
+                  }}>
+                    {user.full_name ? 
+                      user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) :
+                      user.email ? user.email[0].toUpperCase() : 'U'
+                    }
+                  </div>
+                </div>
+                <div className={styles.profileInfo}>
+                  <div className={styles.profileName}>
+                    <span>{user.full_name || user.email || 'User'}</span>
+                    {user.is_active && (
+                      <svg className={styles.verifiedIcon} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                    )}
+                  </div>
+                  <div className={styles.profileEmail}>{user.email || 'No email'}</div>
                 </div>
               </div>
-              <div className={styles.profileInfo}>
-                <div className={styles.profileName}>
-                  <span>Liam Smith</span>
-                  <svg className={styles.verifiedIcon} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                  </svg>
-                </div>
-                <div className={styles.profileEmail}>wilson@example.com</div>
-              </div>
-            </div>
+            ) : null}
 
             {/* Content Sections */}
-            <div className={styles.accountContent}>
-              {/* Left Column */}
-              <div className={styles.accountColumn}>
-                {/* Personal Details */}
-                <div className={styles.accountSection}>
-                  <h2 className={styles.sectionTitle}>Personal details</h2>
-                  <div className={styles.infoGrid}>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Full name</span>
-                      {renderEditableField('fullName', formData.fullName)}
+            {loading ? null : user && formData ? (
+              <div className={styles.accountContent}>
+                {/* Left Column */}
+                <div className={styles.accountColumn}>
+                  {/* Personal Details */}
+                  <div className={styles.accountSection}>
+                    <h2 className={styles.sectionTitle}>Personal Details</h2>
+                    <div className={styles.infoGrid}>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Full Name</span>
+                        <span className={styles.infoValue}>{formData.fullName}</span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Email</span>
+                        <span className={styles.infoValue}>{formData.email}</span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>User ID</span>
+                        <span className={styles.infoValue}>{formData.userId}</span>
+                      </div>
                     </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Date of Birth</span>
-                      {renderEditableField('dateOfBirth', formData.dateOfBirth)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Gender</span>
-                      {renderEditableField('gender', formData.gender)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Nationality</span>
-                      {renderEditableField('nationality', formData.nationality)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Address</span>
-                      <span className={styles.infoValue}>
-                        {renderEditableField('address', formData.address)}
-                        {!isEditMode && (
-                          <svg className={styles.flagIcon} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="2" y="4" width="20" height="16" rx="2"></rect>
-                            <path d="M2 8h20M2 12h20"></path>
-                          </svg>
-                        )}
-                      </span>
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Phone Number</span>
-                      {renderEditableField('phoneNumber', formData.phoneNumber)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Email</span>
-                      {renderEditableField('email', formData.email)}
+                  </div>
+
+                  {/* Account Settings */}
+                  <div className={styles.accountSection}>
+                    <h2 className={styles.sectionTitle}>Account Settings</h2>
+                    <div className={styles.infoGrid}>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Account Status</span>
+                        <span className={`${styles.infoValue} ${styles.badge} ${user.is_active ? styles.badgeGreen : styles.badgeRed}`}>
+                          {formData.accountStatus}
+                        </span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Role</span>
+                        <span className={`${styles.infoValue} ${styles.badge} ${styles.badgeBlue}`}>
+                          {formData.role}
+                        </span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>OpenAI API Key</span>
+                        <span className={`${styles.infoValue} ${styles.badge} ${formData.hasOpenAIKey === 'Configured' ? styles.badgeGreen : styles.badgeYellow}`}>
+                          {formData.hasOpenAIKey}
+                        </span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Custom GPT Prompt</span>
+                        <span className={`${styles.infoValue} ${styles.badge} ${formData.hasCustomPrompt === 'Yes' ? styles.badgeGreen : styles.badgeGray}`}>
+                          {formData.hasCustomPrompt}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Security Settings */}
-                <div className={styles.accountSection}>
-                  <h2 className={styles.sectionTitle}>Security Settings</h2>
-                  <div className={styles.infoGrid}>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Password Last Changed</span>
-                      <span className={styles.infoValue}>July 15, 2024</span>
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Two-Factor Authentication</span>
-                      {renderEditableField('twoFactorAuth', formData.twoFactorAuth, true, styles.badgeBlue)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Security Questions Set</span>
-                      {renderEditableField('securityQuestionsSet', formData.securityQuestionsSet)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Login Notifications</span>
-                      {renderEditableField('loginNotifications', formData.loginNotifications, true, styles.badgeBlue)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Connected Devices</span>
-                      <span className={styles.infoValue}>3 Devices</span>
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Recent Account Activity</span>
-                      <span className={styles.infoValue}>No Suspicious Activity Detected</span>
+                {/* Right Column */}
+                <div className={styles.accountColumn}>
+                  {/* Account Details */}
+                  <div className={styles.accountSection}>
+                    <h2 className={styles.sectionTitle}>Account Details</h2>
+                    <div className={styles.infoGrid}>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Account Created</span>
+                        <span className={styles.infoValue}>{formData.accountCreated}</span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Last Login</span>
+                        <span className={styles.infoValue}>{formData.lastLogin}</span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Last Updated</span>
+                        <span className={styles.infoValue}>{formData.lastUpdated}</span>
+                      </div>
+                      <div className={styles.infoItem}>
+                        <span className={styles.infoLabel}>Account Verification</span>
+                        <span className={`${styles.infoValue} ${styles.badge} ${user.is_active ? styles.badgeGreen : styles.badgeRed}`}>
+                          {user.is_active ? 'Verified' : 'Not Verified'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* Right Column */}
-              <div className={styles.accountColumn}>
-                {/* Account Details */}
-                <div className={styles.accountSection}>
-                  <h2 className={styles.sectionTitle}>Account Details</h2>
-                  <div className={styles.infoGrid}>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Display Name</span>
-                      {renderEditableField('displayName', formData.displayName)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Account Created</span>
-                      <span className={styles.infoValue}>March 20, 2020</span>
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Last Login</span>
-                      <span className={styles.infoValue}>August 22, 2024</span>
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Membership Status</span>
-                      {renderEditableField('membershipStatus', formData.membershipStatus)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Account Verification</span>
-                      <span className={`${styles.infoValue} ${styles.badge} ${styles.badgeGreen}`}>Verified</span>
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Language Preference</span>
-                      {renderEditableField('languagePreference', formData.languagePreference)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Time Zone</span>
-                      {renderEditableField('timeZone', formData.timeZone)}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Preferences */}
-                <div className={styles.accountSection}>
-                  <h2 className={styles.sectionTitle}>Preferences</h2>
-                  <div className={styles.infoGrid}>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Email Notifications</span>
-                      {renderEditableField('emailNotifications', formData.emailNotifications, true, styles.badgePurple)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>SMS Alerts</span>
-                      {renderEditableField('smsAlerts', formData.smsAlerts, true, styles.badgeBlue)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Content Preferences</span>
-                      {renderEditableField('contentPreferences', formData.contentPreferences)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Default Dashboard View</span>
-                      {renderEditableField('defaultDashboardView', formData.defaultDashboardView)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Dark Mode</span>
-                      {renderEditableField('darkMode', formData.darkMode)}
-                    </div>
-                    <div className={styles.infoItem}>
-                      <span className={styles.infoLabel}>Language for Content</span>
-                      {renderEditableField('languageForContent', formData.languageForContent)}
-                    </div>
-                  </div>
-                </div>
+            ) : (
+              <div style={{ padding: '40px', textAlign: 'center' }}>
+                <div>No account data available</div>
               </div>
-            </div>
+            )}
           </div>
         </Layout>
       </div>

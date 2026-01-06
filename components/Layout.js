@@ -3,13 +3,21 @@ import { useRouter } from 'next/router';
 import Image from 'next/image';
 import styles from '../styles/Dashboard.module.css';
 import { logout } from '../lib/api';
+import { getCurrentUser } from '../lib/auth';
 
 export default function Layout({ children, pageTitle = 'Dashboard' }) {
   const router = useRouter();
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [theme, setTheme] = useState('dark');
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [user, setUser] = useState(null);
   const accountDropdownRef = useRef(null);
+
+  // Load user data from localStorage
+  useEffect(() => {
+    const userData = getCurrentUser();
+    setUser(userData);
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -197,15 +205,36 @@ export default function Layout({ children, pageTitle = 'Dashboard' }) {
             type="button"
           >
             <div className={styles.userAvatar}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
+              {user?.full_name ? (
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  backgroundColor: '#3b82f6',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#ffffff',
+                  fontSize: '14px',
+                  fontWeight: '600'
+                }}>
+                  {user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                </div>
+              ) : (
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              )}
             </div>
             {sidebarExpanded && (
               <div className={styles.userInfo}>
-                <div className={styles.userName}>User Name</div>
-                <div className={styles.userRole}>Admin - Epiplex</div>
+                <div className={styles.userName}>
+                  {user?.full_name || user?.email || 'User Name'}
+                </div>
+                <div className={styles.userRole}>
+                  {user?.role ? `${user.role.charAt(0).toUpperCase() + user.role.slice(1)} - Epiplex` : 'User - Epiplex'}
+                </div>
               </div>
             )}
             {sidebarExpanded && (
