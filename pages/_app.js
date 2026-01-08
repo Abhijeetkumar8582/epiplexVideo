@@ -6,6 +6,7 @@ import { useRouter } from 'next/router'
 import { logPageView } from '../lib/activityLogger'
 import { isAuthenticated, requiresAuth } from '../lib/auth'
 import { LoadingProvider } from '../lib/loadingState'
+import prefetchService from '../lib/prefetchService'
 
 export default function App({ Component, pageProps }) {
   const router = useRouter()
@@ -28,6 +29,15 @@ export default function App({ Component, pageProps }) {
       if (!isAuthenticated()) {
         router.replace('/auth');
         return;
+      }
+      
+      // If authenticated and on a main page, ensure data is prefetched
+      // This handles cases where user navigates directly or refreshes
+      if (['/dashboard', '/process-data', '/document'].includes(pathname)) {
+        // Pre-fetch in background (won't block if already cached)
+        prefetchService.prefetchAllData().catch(err => {
+          console.error('Background prefetch failed:', err);
+        });
       }
     } else if (pathname === '/auth' && isAuthenticated()) {
       // If on auth page but already authenticated, redirect to dashboard

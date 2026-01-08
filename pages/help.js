@@ -24,14 +24,14 @@ export default function Help() {
       content: (
         <div>
           <h3>Welcome to Epiplex!</h3>
-          <p>Epiplex is an AI-powered platform that transforms your videos into comprehensive documents. Here's how to get started:</p>
+          <p>Epiplex is an AI-powered platform that transforms your videos into comprehensive documents. Here&apos;s how to get started:</p>
           
           <div style={{ marginTop: '20px' }}>
             <h4 style={{ marginBottom: '10px', color: '#3b82f6' }}>Step 1: Sign In</h4>
-            <p>Use your Google account to sign in securely. Click the "Sign in with Google" button on the authentication page.</p>
+            <p>Use your Google account to sign in securely. Click the &quot;Sign in with Google&quot; button on the authentication page.</p>
             
             <h4 style={{ marginTop: '20px', marginBottom: '10px', color: '#3b82f6' }}>Step 2: Navigate to Process Data</h4>
-            <p>Once logged in, go to the "Process Data" section from the sidebar to upload your first video.</p>
+            <p>Once logged in, go to the &quot;Process Data&quot; section from the sidebar to upload your first video.</p>
             
             <h4 style={{ marginTop: '20px', marginBottom: '10px', color: '#3b82f6' }}>Step 3: Upload Your Video</h4>
             <p>You can upload videos in two ways:</p>
@@ -44,7 +44,7 @@ export default function Help() {
             <p>Your video will go through several processing steps. You can monitor the progress in real-time.</p>
             
             <h4 style={{ marginTop: '20px', marginBottom: '10px', color: '#3b82f6' }}>Step 5: View Your Document</h4>
-            <p>Once processing is complete, navigate to the "Document" section to view and download your generated document.</p>
+            <p>Once processing is complete, navigate to the &quot;Document&quot; section to view and download your generated document.</p>
           </div>
         </div>
       )
@@ -61,11 +61,11 @@ export default function Help() {
           <div style={{ marginTop: '20px' }}>
             <h4 style={{ marginBottom: '10px', color: '#3b82f6' }}>Method 1: File Upload</h4>
             <ol style={{ marginLeft: '20px', marginTop: '10px' }}>
-              <li>Go to the "Process Data" page</li>
-              <li>Click the "Upload Video" button or the upload area</li>
+              <li>Go to the &quot;Process Data&quot; page</li>
+              <li>Click the &quot;Upload Video&quot; button or the upload area</li>
               <li>Select your video file from your device</li>
               <li>Enter a name for your video (required)</li>
-              <li>Click "Upload" to start the process</li>
+              <li>Click &quot;Upload&quot; to start the process</li>
             </ol>
             
             <div style={{ 
@@ -80,12 +80,12 @@ export default function Help() {
             
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#3b82f6' }}>Method 2: Video Link</h4>
             <ol style={{ marginLeft: '20px', marginTop: '10px' }}>
-              <li>Go to the "Process Data" page</li>
-              <li>Click "Upload Video"</li>
-              <li>Select the "Link" tab in the upload dialog</li>
+              <li>Go to the &quot;Process Data&quot; page</li>
+              <li>Click &quot;Upload Video&quot;</li>
+              <li>Select the &quot;Link&quot; tab in the upload dialog</li>
               <li>Paste your video URL in the link field</li>
               <li>Enter a name for your video (required)</li>
-              <li>Click "Upload" to start processing</li>
+              <li>Click &quot;Upload&quot; to start processing</li>
             </ol>
             
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#3b82f6' }}>Supported Formats</h4>
@@ -173,7 +173,7 @@ export default function Help() {
               borderRadius: '8px',
               borderLeft: '4px solid #10b981'
             }}>
-              <h4 style={{ marginBottom: '8px', color: '#10b981' }}>Step 7: Ready</h4>
+              <h4 style={{ marginBottom: '8px', color: '#10b981' }}>Step 5: Ready</h4>
               <p style={{ margin: 0 }}>Your document is complete and ready to view, download, or share!</p>
             </div>
           </div>
@@ -201,8 +201,8 @@ export default function Help() {
           <div style={{ marginTop: '20px' }}>
             <h4 style={{ marginBottom: '10px', color: '#3b82f6' }}>Accessing Documents</h4>
             <ol style={{ marginLeft: '20px', marginTop: '10px' }}>
-              <li>Navigate to the "Document" section from the sidebar</li>
-              <li>You'll see a list of all your processed videos</li>
+              <li>Navigate to the &quot;Document&quot; section from the sidebar</li>
+              <li>You&apos;ll see a list of all your processed videos</li>
               <li>Click on any document to view its details</li>
             </ol>
             
@@ -246,7 +246,7 @@ export default function Help() {
             <h4 style={{ marginBottom: '10px', color: '#3b82f6' }}>Key Metrics</h4>
             <p>The dashboard displays important statistics including:</p>
             <ul style={{ marginLeft: '20px', marginTop: '10px' }}>
-              <li><strong>Total Videos:</strong> Number of videos you've uploaded</li>
+              <li><strong>Total Videos:</strong> Number of videos you&apos;ve uploaded</li>
               <li><strong>Processing Status:</strong> Breakdown of videos by status (processing, completed, failed)</li>
               <li><strong>Activity Statistics:</strong> Recent activity and usage trends</li>
             </ul>
@@ -281,7 +281,7 @@ export default function Help() {
           <p>The Activity Log keeps a record of all your actions and system events.</p>
           
           <div style={{ marginTop: '20px' }}>
-            <h4 style={{ marginBottom: '10px', color: '#3b82f6' }}>What's Tracked</h4>
+            <h4 style={{ marginBottom: '10px', color: '#3b82f6' }}>What&apos;s Tracked</h4>
             <p>The activity log records:</p>
             <ul style={{ marginLeft: '20px', marginTop: '10px' }}>
               <li>Video uploads and processing status changes</li>
@@ -292,7 +292,7 @@ export default function Help() {
             
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#3b82f6' }}>Using the Activity Log</h4>
             <ol style={{ marginLeft: '20px', marginTop: '10px' }}>
-              <li>Navigate to "Activity Log" from the sidebar</li>
+              <li>Navigate to &quot;Activity Log&quot; from the sidebar</li>
               <li>Browse through your recent activities</li>
               <li>Use filters to find specific events</li>
               <li>Review timestamps to track when actions occurred</li>
@@ -331,8 +331,8 @@ export default function Help() {
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#3b82f6' }}>Signing Out</h4>
             <ol style={{ marginLeft: '20px', marginTop: '10px' }}>
               <li>Click on your profile avatar in the sidebar</li>
-              <li>Select "Signout" from the dropdown menu</li>
-              <li>You'll be redirected to the login page</li>
+              <li>Select &quot;Signout&quot; from the dropdown menu</li>
+              <li>You&apos;ll be redirected to the login page</li>
             </ol>
             
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#3b82f6' }}>Privacy & Security</h4>
@@ -371,7 +371,7 @@ export default function Help() {
               <strong>Problem:</strong> Video processing is stuck or taking too long
               <ul style={{ marginLeft: '20px', marginTop: '5px' }}>
                 <li>Processing time depends on video length - longer videos take more time</li>
-                <li>Check the processing status in the "Process Data" section</li>
+                <li>Check the processing status in the &quot;Process Data&quot; section</li>
                 <li>If stuck for more than 30 minutes, try retrying the upload</li>
                 <li>Contact support if the issue persists</li>
               </ul>
@@ -379,9 +379,9 @@ export default function Help() {
             
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#ef4444' }}>Document View Issues</h4>
             <div style={{ marginBottom: '15px' }}>
-              <strong>Problem:</strong> Can't view or download documents
+              <strong>Problem:</strong> Can&apos;t view or download documents
               <ul style={{ marginLeft: '20px', marginTop: '5px' }}>
-                <li>Ensure the video processing is complete (status should be "Ready")</li>
+                <li>Ensure the video processing is complete (status should be &quot;Ready&quot;)</li>
                 <li>Refresh the page and try again</li>
                 <li>Check if you have the necessary permissions</li>
                 <li>Try accessing the document from a different browser</li>
@@ -390,7 +390,7 @@ export default function Help() {
             
             <h4 style={{ marginTop: '25px', marginBottom: '10px', color: '#ef4444' }}>Authentication Issues</h4>
             <div style={{ marginBottom: '15px' }}>
-              <strong>Problem:</strong> Can't sign in or session expired
+              <strong>Problem:</strong> Can&apos;t sign in or session expired
               <ul style={{ marginLeft: '20px', marginTop: '5px' }}>
                 <li>Clear your browser cache and cookies</li>
                 <li>Try signing in again with your Google account</li>
@@ -634,7 +634,7 @@ export default function Help() {
                 color: '#6b7280',
                 marginBottom: '20px'
               }}>
-                If you couldn't find the answer you're looking for, our support team is here to help.
+                If you couldn&apos;t find the answer you&apos;re looking for, our support team is here to help.
               </p>
               <div style={{
                 display: 'flex',

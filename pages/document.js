@@ -324,7 +324,7 @@ export default function Document() {
 
     try {
       console.log('Fetching fresh document data for video:', videoFileNumber);
-      const data = await getDocument(videoFileNumber);
+      const data = await getDocument(videoFileNumber, true); // Include images
       console.log('Document data received:', data);
       console.log('Document data frames:', data?.frames?.length || 0);
       console.log('Document data transcript:', data?.transcript ? 'Present' : 'Missing');
@@ -1002,7 +1002,7 @@ export default function Document() {
                             <div className={styles.transcriptContainer}>
                               <h3 className={styles.transcriptTitle}>Transcription</h3>
                               <div className={styles.transcriptText}>
-                                <p>video doesn't have any voice</p>
+                                <p>video doesn&apos;t have any voice</p>
                               </div>
                             </div>
                           );

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { setAuthData } from '../../../lib/auth';
+import prefetchService from '../../lib/prefetchService';
 
 export default function GoogleCallback() {
   const router = useRouter();
@@ -52,6 +53,13 @@ export default function GoogleCallback() {
 
             setStatus('success');
             
+            // Start pre-fetching in background immediately after login
+            // This runs while redirecting to dashboard
+            prefetchService.prefetchAllData().catch(err => {
+              console.error('Background prefetch failed:', err);
+              // Don't block login if prefetch fails
+            });
+            
             // Redirect to dashboard after a brief delay
             setTimeout(() => {
               router.push('/dashboard');
@@ -94,6 +102,13 @@ export default function GoogleCallback() {
             }
 
             setStatus('success');
+            
+            // Start pre-fetching in background immediately after login
+            // This runs while redirecting to dashboard
+            prefetchService.prefetchAllData().catch(err => {
+              console.error('Background prefetch failed:', err);
+              // Don't block login if prefetch fails
+            });
             
             // Redirect to dashboard after a brief delay
             setTimeout(() => {

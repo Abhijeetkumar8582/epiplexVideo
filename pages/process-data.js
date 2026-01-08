@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
@@ -17,6 +18,7 @@ export default function ProcessData() {
     name: '',
     link: '',
     file: null,
+    files: [], // Support multiple files
     fileUrl: ''
   });
   const [isDragging, setIsDragging] = useState(false);
@@ -69,6 +71,7 @@ export default function ProcessData() {
   const [openAIKeyError, setOpenAIKeyError] = useState(null);
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [transferProgress, setTransferProgress] = useState(0);
+  const transferDialogTimeoutRef = useRef(null);
   
   // OpenAI key availability state
   const [hasOpenAIKey, setHasOpenAIKey] = useState(null); // null = not checked yet, false = no key, true = has key
@@ -162,21 +165,26 @@ export default function ProcessData() {
     return `process-data:videos:page:${page}:status:${status || 'all'}:fileName:${fileName || 'all'}`;
   };
 
-  const fetchVideos = async (page = currentPage) => {
+  const fetchVideos = async (page = currentPage, forceRefresh = false, silent = false) => {
     const cacheKey = getCacheKey(page, filterData.status, filterData.fileName);
     
-    // Check cache first
+    // Get cached data for comparison
     const cachedData = dataCache.get(cacheKey);
-    if (cachedData) {
+    
+    // If not forcing refresh and we have cached data, use it for initial render
+    if (!forceRefresh && cachedData && !silent) {
       setTableData(cachedData.videos);
       setTotalRecords(cachedData.totalRecords);
       setTotalPages(cachedData.totalPages);
       setLoading(false);
-      return;
     }
 
     try {
-      setLoading(true);
+      // Always fetch fresh data from API to check for changes
+      if (!silent) {
+        setLoading(true);
+      }
+      
       const response = await getVideosPanel({ 
         page: page, 
         page_size: pageSize,
@@ -221,34 +229,102 @@ export default function ProcessData() {
           };
         });
         
-        setTableData(mappedData);
-        
         // Update pagination info
         const totalRecords = response.total !== undefined ? response.total : 0;
         const totalPages = Math.ceil(totalRecords / pageSize);
         
-        setTotalRecords(totalRecords);
-        setTotalPages(totalPages);
-
-        // Cache the data
+        // Compare with cached data to detect changes
+        let hasChanges = false;
+        
+        if (!cachedData) {
+          // No cache - this is first load, always update
+          hasChanges = true;
+        } else {
+          // Check for changes: new entries, status updates, or count changes
+          const cachedVideos = cachedData.videos || [];
+          
+          // Check if count changed (new entries or deletions)
+          if (mappedData.length !== cachedVideos.length) {
+            hasChanges = true;
+          } else {
+            // Create maps for quick lookup
+            const cachedMap = new Map(cachedVideos.map(v => [v.id, v]));
+            const newMap = new Map(mappedData.map(v => [v.id, v]));
+            
+            // Check each video for changes
+            for (const newVideo of mappedData) {
+              const cachedVideo = cachedMap.get(newVideo.id);
+              
+              if (!cachedVideo) {
+                // New entry
+                hasChanges = true;
+                break;
+              }
+              
+              // Check if status changed
+              if (cachedVideo.status !== newVideo.status) {
+                hasChanges = true;
+                break;
+              }
+              
+              // Check if lastActivity changed (indicates update)
+              if (cachedVideo.lastActivity !== newVideo.lastActivity) {
+                hasChanges = true;
+                break;
+              }
+            }
+            
+            // Also check for removed videos
+            if (!hasChanges) {
+              for (const cachedVideo of cachedVideos) {
+                if (!newMap.has(cachedVideo.id)) {
+                  hasChanges = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Only update table state if there are actual changes
+        if (hasChanges) {
+          setTableData(mappedData);
+          setTotalRecords(totalRecords);
+          setTotalPages(totalPages);
+        }
+        
+        // Always update cache with fresh data (even if no UI update)
         dataCache.set(cacheKey, {
           videos: mappedData,
           totalRecords,
           totalPages
         }, CACHE_DURATION.VIDEO_LIST);
+        
       } else {
+        // Empty response - only update if we had data before
+        if (cachedData && cachedData.videos && cachedData.videos.length > 0) {
+          setTableData([]);
+          setTotalRecords(0);
+          setTotalPages(1);
+        } else if (!cachedData) {
+          // No cache and no data - first load
+          setTableData([]);
+          setTotalRecords(0);
+          setTotalPages(1);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch videos:', error);
+      // Only update on error if we don't have cached data
+      if (!cachedData) {
         setTableData([]);
         setTotalRecords(0);
         setTotalPages(1);
       }
-    } catch (error) {
-      console.error('Failed to fetch videos:', error);
-      // Set empty array on error
-      setTableData([]);
-      setTotalRecords(0);
-      setTotalPages(1);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -426,40 +502,20 @@ export default function ProcessData() {
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) {
+      // Just store the file in state - don't upload yet
       setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
-      // Start actual upload immediately
-      handleFileUpload(file);
+      setUploadProgress(0);
+      setIsUploading(false);
     }
   };
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
+      // Just store the file in state - don't upload yet
       setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
-      // Start actual upload immediately
-      handleFileUpload(file);
-    }
-  };
-
-  const handleFileUpload = async (file) => {
-    setIsUploading(true);
-    setUploadProgress(0);
-    
-    try {
-      // Upload file immediately when selected
-      await uploadVideo(file, (progress) => {
-        setUploadProgress(progress);
-      });
-      
-      // Upload complete - ensure button is enabled
-      setUploadProgress(100);
-      setIsUploading(false);
-    } catch (error) {
-      console.error('File upload failed:', error);
-      setIsUploading(false);
       setUploadProgress(0);
-      // Show error but don't remove file - user can retry
-      alert('File upload failed. Please try again or select a different file.');
+      setIsUploading(false);
     }
   };
 
@@ -488,7 +544,12 @@ export default function ProcessData() {
       return;
     }
     
-    if (!formData.link && !formData.file && !formData.fileUrl) {
+    // Get files to upload (support both single file and multiple files)
+    const filesToUpload = formData.files && formData.files.length > 0 
+      ? formData.files 
+      : (formData.file ? [formData.file] : []);
+    
+    if (!formData.link && filesToUpload.length === 0 && !formData.fileUrl) {
       return;
     }
 
@@ -527,8 +588,8 @@ export default function ProcessData() {
       return; // Block upload completely - do NOT proceed
     }
 
-    // If file is selected, upload it
-    if (formData.file) {
+    // If files are selected, upload them
+    if (filesToUpload.length > 0) {
       try {
         // IMPORTANT: Do NOT show transfer dialog or start upload until validation passes
         // The OpenAI key check above must complete successfully first
@@ -541,85 +602,132 @@ export default function ProcessData() {
         setTransferProgress(0);
         setDialogOpen(false);
         
-        // Simulate transfer progress
-        const progressInterval = setInterval(() => {
-          setTransferProgress(prev => {
-            if (prev >= 90) {
-              clearInterval(progressInterval);
-              return 90;
-            }
-            return prev + 10;
-          });
-        }, 200);
+        // Upload all files sequentially
+        let lastEntryId = null;
+        let lastJobId = null;
         
-        const response = await uploadVideo(formData.file, (progress) => {
-          setUploadProgress(progress);
-          // Update transfer progress based on upload progress
-          setTransferProgress(Math.min(90, progress * 0.9));
-        }, {
-          name: formData.name,
-          application_name: formData.application_name,
-          tags: formData.tags,
-          language_code: formData.language_code,
-          priority: formData.priority || 'normal'
-        });
+        for (let i = 0; i < filesToUpload.length; i++) {
+          const file = filesToUpload[i];
+          const fileName = filesToUpload.length > 1 
+            ? `${formData.name || file.name} (${i + 1}/${filesToUpload.length})`
+            : (formData.name || file.name);
+          
+          try {
+            // Update progress for current file
+            const fileProgress = (i / filesToUpload.length) * 100;
+            setTransferProgress(fileProgress);
+            
+            const response = await uploadVideo(file, (progress) => {
+              // Calculate overall progress across all files
+              const overallProgress = fileProgress + (progress / filesToUpload.length);
+              setUploadProgress(overallProgress);
+              setTransferProgress(Math.min(90, overallProgress * 0.9));
+            }, {
+              name: fileName,
+              application_name: formData.application_name,
+              tags: formData.tags,
+              language_code: formData.language_code,
+              priority: formData.priority || 'normal'
+            });
+            
+            lastEntryId = response.data?.id || Date.now();
+            lastJobId = response.data?.job_id || null;
+            
+            // Log video upload (non-blocking)
+            if (response.data && response.data.id) {
+              try {
+                logVideoUpload(response.data.id, {
+                  name: fileName,
+                  video_file_number: response.data.video_file_number
+                });
+              } catch (logError) {
+                console.warn('Failed to log video upload:', logError);
+              }
+            }
+          } catch (error) {
+            console.error(`Failed to upload file ${i + 1}:`, error);
+            // Continue with next file even if one fails
+          }
+        }
         
         // Complete transfer progress
         setTransferProgress(100);
-        clearInterval(progressInterval);
+        setUploadProgress(100);
         
-        // Log video upload
-        if (response.data && response.data.id) {
-          logVideoUpload(response.data.id, {
-            name: formData.name,
-            video_file_number: response.data.video_file_number
+        // Close transfer dialog
+        setShowTransferDialog(false);
+        
+        // If we have multiple files, just close dialog and refresh list
+        // Don't show processing dialog for multiple files (they're in queue)
+        if (filesToUpload.length > 1) {
+          setFormData({ name: '', link: '', file: null, files: [], fileUrl: '' });
+          setIsUploading(false);
+          setUploadProgress(0);
+          setTransferProgress(0);
+          setNameError(false);
+          
+          // Refresh the list to show all uploaded videos
+          dataCache.clearByPattern('process-data:videos:');
+          dataCache.clearByPattern('document:videos:');
+          dataCache.clearByPattern('dashboard:');
+          await fetchVideos();
+        } else {
+          // Single file - show processing dialog
+          setNewEntryId(lastEntryId);
+          setCurrentJobId(lastJobId);
+          setProcessingOpen(true);
+          setCurrentStep(0);
+          setFormData({ name: '', link: '', file: null, files: [], fileUrl: '' });
+          setIsUploading(false);
+          setUploadProgress(0);
+          setTransferProgress(0);
+          setNameError(false);
+          
+          // Initialize processing status immediately
+          setProcessingStatus({
+            status: 'processing',
+            message: 'Video uploaded successfully. Processing has started...',
+            current_step: 'upload',
+            step_progress: { upload: 'completed' },
+            progress: 0
           });
+          
+          // Start polling for status if job_id is available
+          if (lastJobId) {
+            setTimeout(() => {
+              startStatusPolling(lastJobId);
+            }, 500);
+          }
         }
         
-        const entryId = response.data?.id || Date.now();
-        const jobId = response.data?.job_id || null;
-        
-        // Invalidate cache to ensure fresh data
+        // Invalidate cache and refresh list in background (non-blocking)
         dataCache.clearByPattern('process-data:videos:');
         dataCache.clearByPattern('document:videos:');
         dataCache.clearByPattern('dashboard:');
         
-        // Refresh the list to show the new entry
-        await fetchVideos();
-        
-        // Close transfer dialog and open processing dialog immediately
-        setShowTransferDialog(false);
-        setNewEntryId(entryId);
-        setCurrentJobId(jobId);
-        setProcessingOpen(true);
-        setCurrentStep(0);
-        setFormData({ name: '', link: '', file: null, fileUrl: '' });
-        setIsUploading(false);
-        setUploadProgress(0);
-        setTransferProgress(0);
-        setNameError(false);
-        
-        // Initialize processing status immediately
-        setProcessingStatus({
-          status: 'processing',
-          message: 'Video uploaded successfully. Processing has started...',
-          current_step: 'upload',
-          step_progress: { upload: 'completed' },
-          progress: 0
+        // Refresh the list in background
+        fetchVideos().catch(err => {
+          console.error('Background refresh failed:', err);
         });
         
-        // Start polling for status if job_id is available
-        if (jobId) {
-          // Small delay to ensure UI updates before starting polling
-          setTimeout(() => {
-            startStatusPolling(jobId);
-          }, 500);
-        } else {
-          // If no jobId, still show processing dialog but with a message
-          console.warn('No job_id returned from upload. Processing may not be tracked.');
-        }
+        // Force refresh after delays
+        // Single delayed refresh after upload (removed multiple refreshes)
+        // The background refresh will handle ongoing updates
+        setTimeout(async () => {
+          try {
+            dataCache.clearByPattern('process-data:videos:');
+            await fetchVideos(currentPage);
+          } catch (err) {
+            console.error('Delayed refresh failed:', err);
+          }
+        }, 3000); // Single refresh after 3 seconds
       } catch (error) {
         console.error('Upload failed:', error);
+        // Clear timeout on error
+        if (transferDialogTimeoutRef.current) {
+          clearTimeout(transferDialogTimeoutRef.current);
+          transferDialogTimeoutRef.current = null;
+        }
         setShowTransferDialog(false);
         setIsUploading(false);
         setUploadProgress(0);
@@ -690,105 +798,187 @@ export default function ProcessData() {
     }
   };
 
-  // Poll job status when processing is open
-  const startStatusPolling = (jobId) => {
-    if (!jobId) {
-      console.warn('Cannot start status polling: no jobId provided');
-      return;
-    }
-    
+  // Single polling mechanism that only updates videos with status "processing"
+  // This replaces the old per-job polling to update only active processing videos
+  const startProcessingVideoPolling = () => {
     // Clear any existing polling interval
     if (statusPollingInterval) {
       clearInterval(statusPollingInterval);
       setStatusPollingInterval(null);
     }
     
-    const pollStatus = async () => {
+    // Use a ref to track the current interval ID to avoid closure issues
+    // Store in a variable that persists across the closure
+    const intervalRef = { current: null };
+    
+    const pollProcessingVideos = async () => {
       try {
-        const status = await getStatus(jobId);
-        if (status) {
-          setProcessingStatus(status);
-        }
+        // Fetch all videos from panel
+        const response = await getVideosPanel({ 
+          page: currentPage, 
+          page_size: pageSize,
+          sort_by: 'updated_at',
+          sort_order: 'desc',
+          status: filterData.status || null,
+          application_name: filterData.fileName || null
+        });
         
-        // Update current step based on status
-        if (status) {
-          const stepProgress = status.step_progress || {};
-          const currentStepName = status.current_step || 'upload';
+        if (response && response.videos) {
+          // Filter for videos with status "processing" only
+          const processingVideos = response.videos.filter(video => video.status === 'processing');
           
-          // Map backend steps to frontend steps (0-6)
-          let stepIndex = 0;
-          
-          // Step 0: Upload (always completed when we start polling)
-          if (stepProgress.upload === 'completed') {
-            stepIndex = 0;
-          }
-          
-          // Step 1: Transcribe
-          if (stepProgress.transcribe === 'processing') {
-            stepIndex = 1;
-          } else if (stepProgress.transcribe === 'completed') {
-            stepIndex = 1;
-          }
-          
-          // Step 2: Extract Keyframes
-          if (stepProgress.extract_frames === 'processing') {
-            stepIndex = 2;
-          } else if (stepProgress.extract_frames === 'completed') {
-            stepIndex = 2;
-          }
-          
-          // Step 4: Analyze Frames (GPT processing in batches of 5)
-          if (stepProgress.analyze_frames === 'processing') {
-            stepIndex = 3;
-          } else if (stepProgress.analyze_frames === 'completed') {
-            stepIndex = 3;
-          }
-          
-          // Step 5: Ready (completed)
-          if (status.status === 'completed') {
-            stepIndex = 4;
-          }
-          
-          setCurrentStep(stepIndex);
-          
-          // If completed or failed, stop polling
-          if (status.status === 'completed' || status.status === 'failed') {
-            if (statusPollingInterval) {
-              clearInterval(statusPollingInterval);
+          if (processingVideos.length > 0) {
+            // Update only processing videos in the table data
+            setTableData(prevData => {
+              const updatedData = [...prevData];
+              const processingMap = new Map(processingVideos.map(v => [v.id, v]));
+              
+              // Update only the processing videos
+              updatedData.forEach((item, index) => {
+                const processingVideo = processingMap.get(item.id);
+                if (processingVideo) {
+                  // Update status and lastActivity for this video only
+                  const updatedDate = new Date(processingVideo.updated_at);
+                  const formatDate = (date) => {
+                    const dateStr = date.toLocaleDateString('en-US', { 
+                      month: 'short', 
+                      day: 'numeric', 
+                      year: 'numeric' 
+                    });
+                    const timeStr = date.toLocaleTimeString('en-US', { 
+                      hour: 'numeric', 
+                      minute: '2-digit', 
+                      hour12: true 
+                    });
+                    return `${dateStr}, ${timeStr}`;
+                  };
+                  
+                  updatedData[index] = {
+                    ...item,
+                    status: processingVideo.status,
+                    lastActivity: formatDate(updatedDate),
+                    job_id: processingVideo.job_id || item.job_id
+                  };
+                }
+              });
+              
+              return updatedData;
+            });
+            
+            // If we have a current job ID being viewed, update its status
+            if (currentJobId) {
+              const currentVideo = processingVideos.find(v => v.job_id === currentJobId);
+              if (currentVideo) {
+                // Get detailed job status for the processing dialog
+                try {
+                  const jobStatus = await getJobStatus(currentJobId);
+                  if (jobStatus) {
+                    setProcessingStatus(jobStatus);
+                    
+                    // Update current step based on status
+                    const stepProgress = jobStatus.step_progress || {};
+                    let stepIndex = 0;
+                    
+                    if (stepProgress.upload === 'completed') {
+                      stepIndex = 0;
+                    }
+                    if (stepProgress.transcribe === 'processing') {
+                      stepIndex = 1;
+                    } else if (stepProgress.transcribe === 'completed') {
+                      stepIndex = 1;
+                    }
+                    if (stepProgress.extract_frames === 'processing') {
+                      stepIndex = 2;
+                    } else if (stepProgress.extract_frames === 'completed') {
+                      stepIndex = 2;
+                    }
+                    if (stepProgress.analyze_frames === 'processing') {
+                      stepIndex = 3;
+                    } else if (stepProgress.analyze_frames === 'completed') {
+                      stepIndex = 3;
+                    }
+                    if (jobStatus.status === 'completed') {
+                      stepIndex = 4;
+                    }
+                    
+                    setCurrentStep(stepIndex);
+                    
+                    // If completed or failed, stop polling and close dialog
+                    if (jobStatus.status === 'completed' || jobStatus.status === 'failed') {
+                      if (intervalRef.current) {
+                        clearInterval(intervalRef.current);
+                        intervalRef.current = null;
+                        setStatusPollingInterval(null);
+                      }
+                      
+                      // Wait a bit then close and refresh
+                      setTimeout(async () => {
+                        setProcessingOpen(false);
+                        setCurrentStep(0);
+                        setProcessingStatus(null);
+                        setCurrentJobId(null);
+                        
+                        // Refresh the list to show updated status
+                        await fetchVideos();
+                        
+                        if (newEntryId) {
+                          setNewEntryId(null);
+                        }
+                      }, 2000);
+                    }
+                  }
+                } catch (error) {
+                  console.error('Failed to get job status:', error);
+                }
+              } else {
+                // Current video is no longer processing, stop polling for it
+                if (intervalRef.current) {
+                  clearInterval(intervalRef.current);
+                  intervalRef.current = null;
+                  setStatusPollingInterval(null);
+                }
+              }
+            }
+          } else {
+            // No processing videos found, stop polling
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+              intervalRef.current = null;
               setStatusPollingInterval(null);
             }
             
-            // Wait a bit then close and refresh
-            setTimeout(async () => {
-              setProcessingOpen(false);
-              setCurrentStep(0);
-              setProcessingStatus(null);
-              setCurrentJobId(null);
-              
-              // Always refresh the list to show updated status
-              await fetchVideos();
-              
-              if (newEntryId) {
-                setNewEntryId(null);
-              }
-            }, 2000);
+            // Refresh the list to show final status
+            await fetchVideos();
           }
         }
       } catch (error) {
-        console.error('Failed to poll status:', error);
+        console.error('Failed to poll processing videos:', error);
         // Continue polling even on error (might be temporary network issue)
       }
     };
     
     // Poll immediately
-    pollStatus();
+    pollProcessingVideos();
     
-    // Then poll every 2 seconds
-    const interval = setInterval(pollStatus, 2000);
+    // Then poll every 5 seconds
+    const interval = setInterval(pollProcessingVideos, 5000);
+    intervalRef.current = interval; // Store in ref for closure access
     setStatusPollingInterval(interval);
     
     // Store interval ID for cleanup
     return interval;
+  };
+  
+  // Legacy function name for backward compatibility
+  const startStatusPolling = (jobId) => {
+    if (!jobId) {
+      console.warn('Cannot start status polling: no jobId provided');
+      return;
+    }
+    
+    // Set current job ID and start the unified polling
+    setCurrentJobId(jobId);
+    startProcessingVideoPolling();
   };
   
   // Cleanup polling on unmount or when processing closes
@@ -801,6 +991,10 @@ export default function ProcessData() {
         clearInterval(backgroundRefreshIntervalRef.current);
         backgroundRefreshIntervalRef.current = null;
       }
+      if (transferDialogTimeoutRef.current) {
+        clearTimeout(transferDialogTimeoutRef.current);
+        transferDialogTimeoutRef.current = null;
+      }
     };
   }, [statusPollingInterval]);
   
@@ -811,15 +1005,37 @@ export default function ProcessData() {
       setStatusPollingInterval(null);
       setProcessingStatus(null);
       setCurrentJobId(null);
+      
+      // Only refresh if we were actually polling (user was watching a specific video)
+      // Don't force refresh - let background refresh handle it naturally
+      if (currentJobId) {
+        // Small delay to let status update propagate
+        setTimeout(() => {
+          dataCache.clearByPattern('process-data:videos:');
+          fetchVideos(currentPage, false); // Use cache if available
+        }, 1000);
+      }
     }
-  }, [processingOpen, statusPollingInterval]);
+  }, [processingOpen, statusPollingInterval, currentPage, currentJobId]);
 
-  // Background refresh: automatically refresh list if there are items with "Processing" status
+  // Smart background refresh: only refresh when needed, with intelligent intervals
+  // Also start unified polling for processing videos
   useEffect(() => {
     // Check if there are any processing items
-    const hasProcessingItems = tableData.some(item => 
+    const processingItems = tableData.filter(item => 
       item.status === 'processing' || item.status === 'uploaded'
     );
+    const hasProcessingItems = processingItems.length > 0;
+    
+    // Start unified polling if there are processing videos and polling is not already active
+    // Use a ref to track if polling is active to avoid multiple intervals
+    if (hasProcessingItems && !statusPollingInterval) {
+      startProcessingVideoPolling();
+    } else if (!hasProcessingItems && statusPollingInterval) {
+      // Stop polling if no processing items
+      clearInterval(statusPollingInterval);
+      setStatusPollingInterval(null);
+    }
 
     // Clear any existing interval first
     if (backgroundRefreshIntervalRef.current) {
@@ -828,12 +1044,21 @@ export default function ProcessData() {
     }
 
     if (hasProcessingItems) {
-      // Set up background refresh every 10 seconds
+      // Use adaptive refresh interval based on number of processing items
+      // More items = slightly more frequent, but still reasonable
+      const refreshInterval = Math.max(10000, 15000 - (processingItems.length * 1000)); // 10-15 seconds
+      
+      // Set up smart background refresh
+      // fetchVideos will automatically detect changes and only update table if needed
       const interval = setInterval(async () => {
-        // Invalidate cache to get fresh data
-        dataCache.clearByPattern('process-data:videos:');
-        await fetchVideos(currentPage);
-      }, 10000); // Refresh every 10 seconds
+        try {
+          // Fetch fresh data silently (won't show loading, will only update if changes detected)
+          // fetchVideos will compare with cache and only update table if there are changes
+          await fetchVideos(currentPage, false, true); // silent mode - no loading indicator, change detection enabled
+        } catch (error) {
+          console.error('Background refresh failed:', error);
+        }
+      }, refreshInterval);
 
       backgroundRefreshIntervalRef.current = interval;
 
@@ -843,6 +1068,12 @@ export default function ProcessData() {
           backgroundRefreshIntervalRef.current = null;
         }
       };
+    } else {
+      // No processing items - stop background refresh completely
+      if (backgroundRefreshIntervalRef.current) {
+        clearInterval(backgroundRefreshIntervalRef.current);
+        backgroundRefreshIntervalRef.current = null;
+      }
     }
   }, [tableData, currentPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1670,14 +1901,13 @@ export default function ProcessData() {
                           </div>
                           <div style={{ fontSize: '13px', color: '#991b1b', lineHeight: '1.6' }}>
                             1. Go to Settings page<br/>
-                            2. Find the "OpenAI API Key" section<br/>
+                            2. Find the &quot;OpenAI API Key&quot; section<br/>
                             3. Enter your OpenAI API key (starts with sk-)<br/>
-                            4. Click "Save" to store your key
+                            4. Click &quot;Save&quot; to store your key
                           </div>
                         </div>
-                        <a 
+                        <Link 
                           href="/settings" 
-                          onClick={(e) => { e.preventDefault(); router.push('/settings'); }} 
                           style={{ 
                             display: 'inline-block',
                             padding: '8px 16px',
@@ -1691,7 +1921,7 @@ export default function ProcessData() {
                           }}
                         >
                           Go to Settings to Add API Key →
-                        </a>
+                        </Link>
                       </div>
                     </div>
                   )}
@@ -1721,6 +1951,7 @@ export default function ProcessData() {
                         className={styles.fileInput}
                         onChange={handleFileSelect}
                         accept=".mp4,.avi,.mov,.mp3,.wav"
+                        multiple
                       />
                     </div>
 
@@ -1818,7 +2049,48 @@ export default function ProcessData() {
         {processingOpen && (
           <div className={styles.processingOverlay}>
             <div className={styles.processingContainer}>
-              <h2 className={styles.processingTitle}>Processing Video Extraction</h2>
+              <div style={{ 
+                position: 'relative', 
+                width: '100%',
+                marginBottom: '20px'
+              }}>
+                <h2 className={styles.processingTitle} style={{ marginBottom: 0 }}>Processing Video Extraction</h2>
+                <button
+                  onClick={() => {
+                    setProcessingOpen(false);
+                    setProcessingStatus(null);
+                    setCurrentJobId(null);
+                    setCurrentStep(0);
+                    if (statusPollingInterval) {
+                      clearInterval(statusPollingInterval);
+                      setStatusPollingInterval(null);
+                    }
+                  }}
+                  style={{
+                    position: 'absolute',
+                    top: '0',
+                    right: '0',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '4px',
+                    transition: 'background-color 0.2s',
+                    zIndex: 10
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                  aria-label="Close processing dialog"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6b7280' }}>
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
               
               {/* Show status message */}
               {processingStatus && processingStatus.message && (

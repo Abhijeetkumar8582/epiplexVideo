@@ -692,7 +692,7 @@ export default function Settings() {
                       <li>You can only customize the <strong>ANALYSIS RULES</strong> section</li>
                       <li>All other sections (output format, prohibitions, goal, etc.) are fixed and cannot be modified</li>
                       <li>Your custom ANALYSIS RULES will be combined with the fixed sections to create the full prompt</li>
-                      <li>If you don't set custom rules, the default ANALYSIS RULES will be used</li>
+                      <li>If you don&apos;t set custom rules, the default ANALYSIS RULES will be used</li>
                       <li>You can reset to the default ANALYSIS RULES at any time</li>
                     </ul>
                   </div>
@@ -1071,7 +1071,7 @@ export default function Settings() {
                     <strong>Security & Usage:</strong>
                     <ul style={{ margin: '8px 0 0 20px', padding: 0 }}>
                       <li>Your API key is stored securely and will be used for all your video processing requests</li>
-                      <li>If you don't set a custom key, the system default key will be used</li>
+                      <li>If you don&apos;t set a custom key, the system default key will be used</li>
                       <li>Your API key is masked in the interface for security</li>
                       <li>You can update or remove your key at any time</li>
                       <li>Make sure your API key has sufficient quota/credits for video processing</li>
